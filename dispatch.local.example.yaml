@@ -20,7 +20,7 @@ runtime:
   worker_healthcheck: disabled  # no base_url to probe; startup instead checks the CLIs are on PATH
   max_workers: 3              # all workers share this host — size to the machine
   max_running_projects: 2
-  max_project_workers: 2
+  max_project_workers: 3
   interval: 3
   healthcheck_timeout: 15
   prompt_group: "default"
@@ -35,7 +35,7 @@ tasks:
     timeout: 600
     conclude_timeout: 120
 
-# Optional. If omitted: the projects root defaults to ~/.local/share/board/projects
+# Optional. If omitted: the projects root defaults to /data/strikebox-data
 # (override with the BOARD_PROJECTS_DIR environment variable), and completed_action
 # defaults to keep. Each project gets a durable directory:
 #   <root>/<project_id>/evidence/<intent_id>/   worker artefacts ($BOARD_EVIDENCE_DIR)
@@ -43,7 +43,7 @@ tasks:
 #   <root>/<project_id>/reports/                auto-generated timeline + reports
 # "workspace_root" is a legacy alias for the same root.
 local:
-  # evidence_root: "/data/board-runs"
+  evidence_root: "/data/strikebox-data"
   completed_action: keep       # keep | remove
 
 # Extra environment variables for every local worker process. These are merged over the
@@ -56,11 +56,13 @@ local:
 #   all_proxy: "http://127.0.0.1:7897"
 
 # No API keys needed — the host CLIs are used as-is. Per-worker `env:` overrides common_env.
+# One worker definition can run three concurrent sessions. Bootstrap runs once per
+# project; three explore tasks require three independent, runnable intents.
 workers:
   - name: "local-claude"
     type: "claudecode"
     task_types: [bootstrap, reason, explore]
-    max_running: 1
+    max_running: 3
     priority: 0
 
   # - name: "local-codex"

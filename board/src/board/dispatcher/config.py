@@ -267,7 +267,7 @@ class DispatchConfig(BaseModel):
                 raise ValueError(
                     "container.evidence_root is required when runtime.execution is container: "
                     "a durable projects root that is bind-mounted into every worker container "
-                    "(e.g. \"/data/board-projects\") so evidence survives container teardown"
+                    "(e.g. \"/data/strikebox-data\") so evidence survives container teardown"
                 )
             for worker in self.workers:
                 required = WORKER_ENV_KEYS[worker.type]

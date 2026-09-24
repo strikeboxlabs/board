@@ -17,7 +17,7 @@ class LocalBackend:
 
     Each project gets a durable directory under the projects root (``evidence_root``
     config key, falling back to legacy ``workspace_root``, falling back to
-    ``~/.local/share/board/projects``)::
+    ``BOARD_PROJECTS_DIR`` or ``/data/strikebox-data``)::
 
         <root>/<project_id>/
           evidence/<intent_id>/   # worker artefacts, referenced by $BOARD_EVIDENCE_DIR

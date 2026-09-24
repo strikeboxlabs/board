@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 from concurrent.futures import Future
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
+import pytest
+
+from board.dispatcher.config import DispatchConfig
 from board.dispatcher.models import ReasonCheckpoint, RunningTask
+from board.dispatcher.protocol.client import ApiResult
 from board.dispatcher.runtime.cancellation import TaskCancellation
 from board.dispatcher.scheduler.loop import DispatcherLoop
 from board.dispatcher.scheduler.worker_select import choose_worker
@@ -120,6 +127,38 @@ def test_choose_worker_prefers_priority_then_lower_running_count() -> None:
     )
 
     assert [worker.name for worker in ordered] == ["first", "busy", "lower"]
+
+
+@pytest.mark.parametrize(("intent_count", "expected_sessions"), [(1, 1), (4, 3)])
+def test_local_example_dispatches_up_to_three_independent_tasks(intent_count, expected_sessions) -> None:
+    loop = _loop()
+    loop.config = DispatchConfig.load(Path(__file__).resolve().parents[2] / "dispatch.local.example.yaml")
+    loop.futures = {}
+    project = make_project(intents=[make_intent(f"i{index:03d}") for index in range(intent_count)])
+    for intent in project.intents:
+        intent.worker = None
+    loop.reason_checkpoints[project.project.id] = ReasonCheckpoint(
+        fact_count=len(project.facts), hint_count=len(project.hints), open_intent_count=intent_count,
+    )
+    loop.container_manager = SimpleNamespace(container_name=lambda project_id: project_id)
+    loop.client = SimpleNamespace(
+        get_project=lambda _project_id: project,
+        export_project=lambda _project_id: "graph",
+        heartbeat=Mock(return_value=ApiResult(200)),
+    )
+    # Keep submitted tasks pending so capacity is exercised before any task finishes.
+    loop.executor = SimpleNamespace(submit=Mock(side_effect=lambda *_args: Future()))
+    summary = _summary(project.project.id, "active")
+
+    loop._dispatch_available([summary])
+    loop._dispatch_available([summary])
+
+    assert len(loop.futures) == expected_sessions
+    assert len({task.intent_id for task in loop.futures.values()}) == expected_sessions
+    assert {task.task_type for task in loop.futures.values()} == {"explore"}
+    assert {task.worker_name for task in loop.futures.values()} == {loop.config.workers[0].name}
+    assert loop.client.heartbeat.call_count == expected_sessions
+    assert loop.executor.submit.call_count == expected_sessions
 
 
 def test_new_fact_dispatches_reason_before_unclaimed_explore_intent() -> None:

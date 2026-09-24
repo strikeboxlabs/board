@@ -8,8 +8,7 @@ Every project owns a directory under the projects root::
       reports/                   # rendered timeline / graph / reports land here
       scratch/                   # regenerable internals (graph snapshots, ...)
 
-The projects root defaults to ``~/.local/share/board/projects`` (parity
-with the database location) and can be overridden with the
+The projects root defaults to ``/data/strikebox-data`` and can be overridden with the
 ``BOARD_PROJECTS_DIR`` environment variable or the ``evidence_root``
 config key in the dispatcher config.
 """
@@ -26,7 +25,7 @@ def default_projects_root() -> Path:
     override = os.environ.get(PROJECTS_ROOT_ENV)
     if override:
         return Path(override).expanduser()
-    return Path.home() / ".local" / "share" / "board" / "projects"
+    return Path("/data/strikebox-data")
 
 
 def sanitize_project_id(project_id: str) -> str:

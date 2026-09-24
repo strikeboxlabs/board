@@ -49,7 +49,7 @@ container:
   # Durable projects root, bind-mounted into every worker container at /board/project.
   # Worker evidence (captures, screenshots, scripts) written to $BOARD_EVIDENCE_DIR lands
   # here and survives container teardown and reboots. Required in container mode.
-  evidence_root: "/data/board-projects"
+  evidence_root: "/data/strikebox-data"
   # Add Linux capabilities only when a task truly needs them, such as packet crafting or network admin actions.
   # cap_add:
   #   - "NET_RAW"
