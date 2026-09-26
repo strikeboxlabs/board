@@ -36,6 +36,9 @@ def render_graph_yaml(conn: sqlite3.Connection, project_id: str) -> str:
         }
     }
 
+    if proj["execution_notes"]:
+        graph["project"]["execution_notes"] = proj["execution_notes"]
+
     if hints:
         graph["hints"] = [
             {
@@ -59,6 +62,9 @@ def render_graph_yaml(conn: sqlite3.Connection, project_id: str) -> str:
             "created_at": format_export_timestamp(i["created_at"]),
             "concluded_at": format_export_timestamp(i["concluded_at"]),
         }
+        if i["excluded"]:
+            entry["id"] = i["id"]
+            entry["excluded"] = True
         priority = i["priority"] if "priority" in i.keys() else None
         if priority is not None:
             entry["priority"] = priority

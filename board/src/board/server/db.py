@@ -153,6 +153,17 @@ def configure(path: Path) -> None:
         _ensure_project_columns(conn)
         _ensure_intent_columns(conn)
         _ensure_job_columns(conn)
+        for column in ("stop_state", "stop_error"):
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}
+            if column not in columns:
+                conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} TEXT")
+        # Bring projects stopped by older clients under the same acknowledgement
+        # barrier; their detached jobs must not survive a nominal suspension.
+        conn.execute("""UPDATE projects SET suspension_id = lower(hex(randomblob(16))), suspension_ack_id = NULL
+                        WHERE status = 'stopped' AND suspension_id IS NULL""")
+        conn.execute("""UPDATE jobs SET status = 'killed', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+                        stop_state = CASE WHEN trim(coalesce(stop_command, '')) != '' THEN 'pending' ELSE 'manual' END
+                        WHERE status = 'running' AND project_id IN (SELECT id FROM projects WHERE status = 'stopped')""")
 
 
 def backup_existing_db() -> None:
@@ -181,9 +192,12 @@ def _ensure_project_columns(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "UPDATE projects SET bootstrap_enabled = CASE WHEN bootstrap_mode = 'disabled' THEN 0 ELSE 1 END"
             )
-    for column in ("abort_reason", "aborted_at", "aborted_by"):
+    for column in ("abort_reason", "aborted_at", "aborted_by", "suspension_id", "suspension_ack_id"):
         if column not in columns:
             conn.execute(f"ALTER TABLE projects ADD COLUMN {column} TEXT")
+
+    if "execution_notes" not in columns:
+        conn.execute("ALTER TABLE projects ADD COLUMN execution_notes TEXT NOT NULL DEFAULT ''")
 
 
 def _ensure_job_columns(conn: sqlite3.Connection) -> None:
@@ -229,8 +243,10 @@ def _ensure_job_columns(conn: sqlite3.Connection) -> None:
 
 
 def _ensure_intent_columns(conn: sqlite3.Connection) -> None:
-    """Upgrade pre-jobs databases: intents gain priority/blocked_by and affinity columns."""
+    """Upgrade intent scheduling and operator exclusion columns."""
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(intents)")}
+    if "excluded" not in columns:
+        conn.execute("ALTER TABLE intents ADD COLUMN excluded INTEGER NOT NULL DEFAULT 0")
     if "priority" not in columns:
         conn.execute("ALTER TABLE intents ADD COLUMN priority INTEGER NOT NULL DEFAULT 50")
     if "blocked_by" not in columns:

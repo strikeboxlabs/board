@@ -16,9 +16,10 @@ def graph_signature(project, config) -> str:
     payload = {
         "facts": [f.model_dump() for f in project.facts],
         "hints": [h.model_dump() for h in project.hints],
-        "intents": [(i.id, i.to, i.description, i.priority, i.blocked_by, i.assigned_worker) for i in project.intents],
+        "intents": [(i.id, i.to, i.description, i.priority, i.blocked_by, i.assigned_worker, i.excluded) for i in project.intents],
         "jobs": [(j.id, j.status) for j in project.jobs],
         "policy": config.model_dump(),
+        "execution_notes": project.project.execution_notes,
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 

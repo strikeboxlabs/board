@@ -76,7 +76,8 @@ class DispatcherLoop:
         self._startup_healthchecks_checked = False
         self._job_checks_inflight: set[tuple[str, str]] = set()
         self._job_check_futures: dict[Future, tuple[str, str]] = {}
-        self._job_stops_done: set[tuple[str, str]] = set()
+        self._job_stop_futures = {}
+        self._job_stop_results = {}
 
     def close(self) -> None:
         if self.futures:
@@ -107,6 +108,7 @@ class DispatcherLoop:
                     self._queue_container_cleanups(summaries)
                     self._persist_aborted_reports(summaries)
                     self._monitor_jobs(summaries)
+                    self._acknowledge_suspensions(summaries)
                     self._dispatch_available(summaries)
                 except requests.RequestException as exc:
                     if once:
@@ -316,6 +318,7 @@ class DispatcherLoop:
             intent
             for intent in project.intents
             if intent.to is None
+            and not intent.excluded
             and intent.worker is None
             and intent.id not in running_intent_ids
             and not self._is_bootstrap_intent(intent)
@@ -721,7 +724,7 @@ class DispatcherLoop:
         return len(self.runtime_project_ids & active_ids)
 
     def _project_open_intent_count(self, project: ProjectDetail) -> int:
-        return sum(1 for intent in project.intents if intent.to is None)
+        return sum(1 for intent in project.intents if intent.to is None and not intent.excluded)
 
     def _is_bootstrap_intent(self, intent: Intent) -> bool:
         return (
@@ -751,8 +754,9 @@ class DispatcherLoop:
     def _project_requires_bootstrap(self, project: ProjectDetail) -> bool:
         if not project.project.bootstrap_enabled:
             return False
-        if self._get_bootstrap_intent(project) is not None:
-            return True
+        bootstrap = self._get_bootstrap_intent(project)
+        if bootstrap is not None:
+            return not bootstrap.excluded
         return any("bootstrap" in worker.task_types for worker in self.config.workers)
 
     def _create_bootstrap_intent(self, project_id: str) -> Intent | None:
@@ -827,26 +831,35 @@ class DispatcherLoop:
             key = self._job_check_futures.pop(future)
             self._job_checks_inflight.discard(key)
 
+        if not hasattr(self, "_job_stop_futures"):
+            self._job_stop_futures, self._job_stop_results = {}, {}
+        for future in [f for f in self._job_stop_futures if f.done()]:
+            key = self._job_stop_futures.pop(future)
+            try:
+                self._job_stop_results[key] = future.result()
+            except Exception as exc:
+                self._job_stop_results[key] = {"success": False, "error": str(exc)[:2000]}
+        for key, result in list(self._job_stop_results.items()):
+            response = self.client.record_job_stop(*key, result)
+            if response.ok or response.status_code in (404, 409):
+                del self._job_stop_results[key]
+
         for summary in summaries:
-            if summary.status != "active":
-                continue
             try:
                 jobs = self.client.list_jobs(summary.id)
             except requests.RequestException as exc:
                 LOG.debug("job list failed project=%s error=%s", summary.id, exc)
                 continue
             for job in jobs:
-                if job.get("status") != "running":
-                    # terminal jobs: run their stop command exactly once so an
-                    # exhausted or human-killed job actually ends its process
-                    if job.get("status") in ("exhausted", "killed"):
-                        stop_key = (summary.id, job["id"])
-                        stop_command = (job.get("stop_command") or "").strip()
-                        if stop_command and stop_key not in self._job_stops_done:
-                            self._job_stops_done.add(stop_key)
-                            self.cleanup_executor.submit(
-                                self._run_job_stop, summary.id, job["id"], stop_command
-                            )
+                key = (summary.id, job["id"])
+                if job.get("stop_state") == "pending":
+                    if key not in self._job_stop_futures.values() and key not in self._job_stop_results:
+                        future = self.cleanup_executor.submit(
+                            self._run_job_stop, summary.id, job["id"], job.get("stop_command") or ""
+                        )
+                        self._job_stop_futures[future] = key
+                # Suspension permits cleanup only, never a new check/probe.
+                if summary.status != "active" or job.get("status") != "running":
                     continue
                 budget = job.get("budget_seconds")
                 created_at = job.get("created_at")
@@ -919,7 +932,9 @@ class DispatcherLoop:
             )
             self.cleanup_futures[future] = (f"job-reports-{project_id}-{job['id']}", None, None)
 
-    def _run_job_stop(self, project_id: str, job_id: str, stop_command: str) -> None:
+    def _run_job_stop(self, project_id: str, job_id: str, stop_command: str) -> dict:
+        if not stop_command.strip():
+            return {"success": False, "error": "No stop command registered; stop the process manually"}
         try:
             proc = subprocess.run(
                 stop_command,
@@ -936,8 +951,23 @@ class DispatcherLoop:
                 (proc.stdout or "").strip()[:200],
                 (proc.stderr or "").strip()[:200],
             )
-        except Exception:
+            return {"success": proc.returncode == 0,
+                    "error": "" if proc.returncode == 0 else f"Exit {proc.returncode}: {(proc.stderr or proc.stdout or '').strip()[:1800]}"}
+        except Exception as exc:
             LOG.exception("job stop crashed project=%s job=%s", project_id, job_id)
+            return {"success": False, "error": str(exc)[:2000]}
+
+    def _acknowledge_suspensions(self, summaries: list[ProjectSummary]) -> None:
+        for summary in summaries:
+            if summary.status != "stopped" or not summary.suspension_id or summary.suspension_ack_id == summary.suspension_id:
+                continue
+            if any(task.project_id == summary.id for task in self.futures.values()):
+                continue
+            if any(key[0] == summary.id for key in self._job_checks_inflight):
+                continue
+            if self._inactive_cleanup_done.get(summary.id) != "stopped":
+                continue
+            self.client.acknowledge_suspension(summary.id, summary.suspension_id)
 
     @staticmethod
     def _seconds_since(timestamp: str) -> float:

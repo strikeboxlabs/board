@@ -211,6 +211,12 @@ class BoardClient:
             json={"worker": "dispatcher.jobs", "status": status, "result": result},
         )
 
+    def acknowledge_suspension(self, project_id: str, suspension_id: str) -> ApiResult:
+        return self._request_json("POST", f"/projects/{project_id}/suspension/ack", json={"suspension_id": suspension_id})
+
+    def record_job_stop(self, project_id: str, job_id: str, result: dict) -> ApiResult:
+        return self._request_json("POST", f"/projects/{project_id}/jobs/{job_id}/stop-result", json=result)
+
     def _request_json(self, method: str, path: str, json: dict[str, Any]) -> ApiResult:
         try:
             response = self._session().request(

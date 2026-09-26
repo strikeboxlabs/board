@@ -125,6 +125,8 @@ def get_claimable_open_intent_or_404(
     row = get_intent_or_404(conn, project_id, intent_id)
     if row["to_fact_id"] is not None:
         raise HTTPException(409, "Intent already concluded")
+    if row["excluded"]:
+        raise HTTPException(409, "Intent is excluded by the operator")
     if row["worker"] is not None and row["worker"] != worker:
         raise HTTPException(409, f"Intent is currently claimed by {row['worker']}")
     return row
@@ -176,6 +178,7 @@ def intent_to_model(conn: sqlite3.Connection, row: sqlite3.Row, project_id: str)
         assigned_worker=row["assigned_worker"],
         priority_set_by=row["priority_set_by"],
         priority_set_at=row["priority_set_at"],
+        excluded=bool(row["excluded"]),
     )
 
 
@@ -199,6 +202,8 @@ def build_jobs(conn: sqlite3.Connection, project_id: str) -> list[Job]:
             fact_id=row["fact_id"],
             created_at=row["created_at"],
             finished_at=row["finished_at"],
+            stop_state=row["stop_state"],
+            stop_error=row["stop_error"],
         )
         for row in rows
     ]
@@ -244,6 +249,9 @@ def project_meta_from_row(row: sqlite3.Row) -> ProjectMeta:
         abort_reason=row["abort_reason"],
         aborted_at=row["aborted_at"],
         aborted_by=row["aborted_by"],
+        suspension_id=row["suspension_id"],
+        suspension_ack_id=row["suspension_ack_id"],
+        execution_notes=row["execution_notes"],
     )
 
 

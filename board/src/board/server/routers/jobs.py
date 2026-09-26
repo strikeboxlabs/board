@@ -8,6 +8,7 @@ from board.server.models import (
     Job,
     JobProgressRequest,
     KillJobRequest,
+    JobStopResultRequest,
 )
 from board.server.services import (
     check_project_active,
@@ -30,6 +31,9 @@ def _row_to_job(row, project_id: str) -> Job:
         description=row["description"],
         status=row["status"],
         check_command=row["check_command"],
+        stop_command=row["stop_command"],
+        stop_state=row["stop_state"],
+        stop_error=row["stop_error"],
         budget_seconds=row["budget_seconds"],
         creator=row["creator"],
         last_check_at=row["last_check_at"],
@@ -68,10 +72,10 @@ def create_job(project_id: str, body: CreateJobRequest):
         jid = next_job_id(conn, project_id)
         conn.execute(
             """
-            INSERT INTO jobs (id, project_id, description, status, check_command, budget_seconds, creator, created_at)
-            VALUES (?, ?, ?, 'running', ?, ?, ?, ?)
+            INSERT INTO jobs (id, project_id, description, status, check_command, stop_command, budget_seconds, creator, created_at)
+            VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?)
             """,
-            (jid, project_id, body.description, body.check_command, body.budget_seconds, body.creator, now),
+            (jid, project_id, body.description, body.check_command, body.stop_command, body.budget_seconds, body.creator, now),
         )
         return Job(
             id=jid,
@@ -133,6 +137,10 @@ def finish_job(project_id: str, job_id: str, body: FinishJobRequest):
             """,
             (body.status, now, fact_id, now, result, job_id, project_id),
         )
+        terminal = conn.execute("SELECT status, stop_command FROM jobs WHERE project_id = ? AND id = ?", (project_id, job_id)).fetchone()
+        if terminal["status"] in ("killed", "exhausted"):
+            state = "pending" if (terminal["stop_command"] or "").strip() else "manual"
+            conn.execute("UPDATE jobs SET stop_state = ? WHERE project_id = ? AND id = ?", (state, project_id, job_id))
         return {
             "job": _row_to_job(conn.execute(
                 "SELECT * FROM jobs WHERE id = ? AND project_id = ?",
@@ -173,6 +181,10 @@ def kill_job(project_id: str, job_id: str, body: KillJobRequest):
             """,
             (now, fact_id, now, job_id, project_id),
         )
+        terminal = conn.execute("SELECT status, stop_command FROM jobs WHERE project_id = ? AND id = ?", (project_id, job_id)).fetchone()
+        if terminal["status"] in ("killed", "exhausted"):
+            state = "pending" if (terminal["stop_command"] or "").strip() else "manual"
+            conn.execute("UPDATE jobs SET stop_state = ? WHERE project_id = ? AND id = ?", (state, project_id, job_id))
         return {
             "job": _row_to_job(conn.execute(
                 "SELECT * FROM jobs WHERE id = ? AND project_id = ?",
@@ -180,3 +192,19 @@ def kill_job(project_id: str, job_id: str, body: KillJobRequest):
             ).fetchone(), project_id),
             "fact": Fact(id=fact_id, description=description),
         }
+
+
+@router.post("/projects/{project_id}/jobs/{job_id}/stop-result", response_model=Job)
+def record_job_stop(project_id: str, job_id: str, body: JobStopResultRequest):
+    with get_conn() as conn:
+        get_project_or_404(conn, project_id)
+        row = conn.execute("SELECT * FROM jobs WHERE project_id = ? AND id = ?", (project_id, job_id)).fetchone()
+        if row is None:
+            raise HTTPException(404, "Job not found")
+        if row["stop_state"] == "stopped" and body.success:
+            return _row_to_job(row, project_id)
+        if row["stop_state"] != "pending":
+            raise HTTPException(409, "No pending stop request")
+        conn.execute("UPDATE jobs SET stop_state = ?, stop_error = ? WHERE project_id = ? AND id = ?",
+                     ("stopped" if body.success else "failed", None if body.success else body.error or "Stop command failed", project_id, job_id))
+        return _row_to_job(conn.execute("SELECT * FROM jobs WHERE project_id = ? AND id = ?", (project_id, job_id)).fetchone(), project_id)

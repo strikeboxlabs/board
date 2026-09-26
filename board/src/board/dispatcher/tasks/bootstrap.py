@@ -9,7 +9,7 @@ from board.dispatcher.contracts import (
     validate_bootstrap_conclude_payload,
     validate_bootstrap_execute_payload,
 )
-from board.dispatcher.prompting import format_hints, load_prompt, render_prompt
+from board.dispatcher.prompting import format_hints, load_prompt, render_prompt, with_execution_constraints
 from board.dispatcher.protocol.client import BoardClient
 from board.dispatcher.runtime.cancellation import TaskCancellation
 from board.dispatcher.runtime.containers import ContainerManager
@@ -96,6 +96,7 @@ def run_bootstrap_task(
             _bootstrap_prompt_replacements(project),
         )
 
+        prompt = with_execution_constraints(prompt, project)
         session = driver.prepare_session()
         execute = driver.build_execute(worker, prompt, session)
         session = execute.session
@@ -294,6 +295,7 @@ def _try_conclude_fallback(
         load_prompt(config.runtime.prompt_group, "bootstrap_conclude.md"),
         _bootstrap_prompt_replacements(project),
     )
+    prompt = with_execution_constraints(prompt, project)
     conclude_argv = driver.build_conclude(worker, prompt, session)
     LOG.info("starting bootstrap conclude fallback project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
     conclude_started = time.perf_counter()

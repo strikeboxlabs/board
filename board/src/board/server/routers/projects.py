@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from fastapi import APIRouter, HTTPException
 
 from board.server.db import get_conn
@@ -17,6 +19,7 @@ from board.server.models import (
     ReasonClaimRequest,
     UpdateProjectTitleRequest,
     UpdateProjectStatusRequest,
+    SuspensionAckRequest,
 )
 from board.server.services import (
     abort_project,
@@ -53,20 +56,15 @@ def list_projects():
             SELECT p.*,
                 (SELECT COUNT(*) FROM facts WHERE project_id = p.id) AS fact_count,
                 (SELECT COUNT(*) FROM intents WHERE project_id = p.id) AS intent_count,
-                (SELECT COUNT(*) FROM intents WHERE project_id = p.id AND concluded_at IS NULL AND worker IS NOT NULL) AS working_intent_count,
-                (SELECT COUNT(*) FROM intents WHERE project_id = p.id AND concluded_at IS NULL AND worker IS NULL) AS unclaimed_intent_count,
+                (SELECT COUNT(*) FROM intents WHERE project_id = p.id AND concluded_at IS NULL AND excluded = 0 AND worker IS NOT NULL) AS working_intent_count,
+                (SELECT COUNT(*) FROM intents WHERE project_id = p.id AND concluded_at IS NULL AND excluded = 0 AND worker IS NULL) AS unclaimed_intent_count,
                 (SELECT COUNT(*) FROM hints WHERE project_id = p.id) AS hint_count
             FROM projects p
             ORDER BY p.created_at
         """).fetchall()
         return [
             ProjectSummary(
-                id=row["id"],
-                title=row["title"],
-                status=row["status"],
-                bootstrap_enabled=bool(row["bootstrap_enabled"]),
-                created_at=row["created_at"],
-                reason=project_reason_from_row(row),
+                **project_meta_from_row(row).model_dump(),
                 fact_count=row["fact_count"],
                 intent_count=row["intent_count"],
                 working_intent_count=row["working_intent_count"],
@@ -178,18 +176,66 @@ def update_project_status(project_id: str, body: UpdateProjectStatusRequest):
         if current_status == body.status:
             return project_meta_from_row(row)
 
-        conn.execute(
-            "UPDATE projects SET status = ? WHERE id = ?",
-            (body.status, project_id),
-        )
         if body.status == "stopped":
             conn.execute(
-                "UPDATE intents SET worker = NULL WHERE project_id = ? AND concluded_at IS NULL",
+                "UPDATE projects SET status = 'stopped', suspension_id = ?, suspension_ack_id = NULL WHERE id = ?",
+                (uuid4().hex, project_id),
+            )
+            conn.execute(
+                "UPDATE intents SET worker = NULL, last_heartbeat_at = NULL WHERE project_id = ? AND concluded_at IS NULL",
                 (project_id,),
             )
             clear_project_reason(conn, project_id)
-        updated = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+            # Detached jobs cannot be resumed as processes. End them, preserve their
+            # output and request cleanup; subsequent work must be explicitly planned.
+            conn.execute(
+                """UPDATE jobs SET status = 'killed', finished_at = ?,
+                   stop_state = CASE WHEN trim(coalesce(stop_command, '')) != '' THEN 'pending' ELSE 'manual' END,
+                   stop_error = NULL WHERE project_id = ? AND status = 'running'""",
+                (utcnow(), project_id),
+            )
+            message = "Project suspended by operator. No automatic resume. Background jobs requested to stop."
+        else:
+            if row["suspension_id"] and row["suspension_ack_id"] != row["suspension_id"]:
+                raise HTTPException(409, "Suspending: waiting for the dispatcher to finish stopping workers")
+            for jid in set(body.confirmed_stopped_job_ids):
+                job = conn.execute("SELECT * FROM jobs WHERE project_id = ? AND id = ?", (project_id, jid)).fetchone()
+                if job is None or job["stop_state"] not in ("manual", "failed", "stopped"):
+                    raise HTTPException(409, f"Job {jid} cannot be confirmed stopped")
+                conn.execute("UPDATE jobs SET stop_state = 'stopped', stop_error = NULL WHERE project_id = ? AND id = ?", (project_id, jid))
+            unresolved = conn.execute(
+                "SELECT id FROM jobs WHERE project_id = ? AND stop_state IN ('pending', 'manual', 'failed')", (project_id,)
+            ).fetchall()
+            if unresolved:
+                raise HTTPException(409, "Background jobs still need to stop: " + ", ".join(j["id"] for j in unresolved))
+            if body.excluded_intent_ids is not None:
+                ids = set(body.excluded_intent_ids)
+                open_ids = {i["id"] for i in conn.execute("SELECT id FROM intents WHERE project_id = ? AND to_fact_id IS NULL", (project_id,))}
+                if not ids <= open_ids:
+                    raise HTTPException(409, "Only unfinished intents can be excluded; refresh the project")
+                conn.execute("UPDATE intents SET excluded = 0 WHERE project_id = ? AND to_fact_id IS NULL", (project_id,))
+                conn.executemany("UPDATE intents SET excluded = 1 WHERE project_id = ? AND id = ?", [(project_id, iid) for iid in ids])
+            notes = row["execution_notes"] if body.execution_notes is None else body.execution_notes.strip()
+            conn.execute("UPDATE projects SET status = 'active', execution_notes = ? WHERE id = ?", (notes, project_id))
+            excluded = [i["id"] for i in conn.execute("SELECT id FROM intents WHERE project_id = ? AND excluded = 1 ORDER BY id", (project_id,))]
+            message = f"Project resumed by operator. Excluded intents: {', '.join(excluded) or 'none'}."
+            if notes:
+                message += f" Current execution instructions: {notes}"
+        conn.execute("INSERT INTO hints (id, project_id, content, creator, created_at) VALUES (?, ?, ?, 'human', ?)",
+                     (next_hint_id(conn, project_id), project_id, message, utcnow()))
+        updated = get_project_or_404(conn, project_id)
         return project_meta_from_row(updated)
+
+
+@router.post("/projects/{project_id}/suspension/ack", response_model=ProjectMeta)
+def acknowledge_suspension(project_id: str, body: SuspensionAckRequest):
+    """Dispatcher acknowledges that the old worker processes have exited."""
+    with get_conn() as conn:
+        row = get_project_or_404(conn, project_id)
+        if row["status"] != "stopped" or row["suspension_id"] != body.suspension_id:
+            raise HTTPException(409, "Suspension changed")
+        conn.execute("UPDATE projects SET suspension_ack_id = ? WHERE id = ?", (body.suspension_id, project_id))
+        return project_meta_from_row(get_project_or_404(conn, project_id))
 
 
 @router.post("/projects/{project_id}/abort", response_model=ProjectMeta)

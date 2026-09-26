@@ -30,3 +30,17 @@ def format_hints(hints: list[dict[str, Any]]) -> str:
 
 def format_json_block(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2)
+
+
+def with_execution_constraints(prompt: str, project) -> str:
+    """Carry the current operator policy into every worker phase after resume."""
+    excluded = [{"id": i.id, "description": i.description} for i in project.intents if i.excluded]
+    notes = project.project.execution_notes.strip()
+    if not notes and not excluded:
+        return prompt
+    policy = {"execution_instructions": notes, "excluded_intents": excluded}
+    return ("CURRENT OPERATOR EXECUTION CONSTRAINTS\n"
+            "These instructions supersede older hints about what work to perform. "
+            "Do not execute, retry, or recreate excluded intents. Preserve their evidence. "
+            "Plan only work consistent with these constraints.\n"
+            + format_json_block(policy) + "\n\n" + prompt)

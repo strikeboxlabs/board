@@ -31,6 +31,7 @@ class Intent(BaseModel):
     assigned_worker: str | None = None
     priority_set_by: str | None = None
     priority_set_at: str | None = None
+    excluded: bool = False
 
     model_config = {"populate_by_name": True}
 
@@ -81,6 +82,8 @@ class Job(BaseModel):
     fact_id: str | None = None
     created_at: str
     finished_at: str | None = None
+    stop_state: Literal["pending", "stopped", "failed", "manual"] | None = None
+    stop_error: str | None = None
 
 
 class CreateJobRequest(BaseModel):
@@ -185,6 +188,9 @@ class ProjectMeta(BaseModel):
     abort_reason: str | None = None
     aborted_at: str | None = None
     aborted_by: str | None = None
+    suspension_id: str | None = None
+    suspension_ack_id: str | None = None
+    execution_notes: str = ""
 
 
 class ProjectSummary(ProjectMeta):
@@ -350,6 +356,18 @@ class ConcludeResponse(BaseModel):
 
 class UpdateProjectStatusRequest(BaseModel):
     status: Literal["active", "stopped"]
+    execution_notes: str | None = Field(default=None, max_length=12000)
+    excluded_intent_ids: list[str] | None = None
+    confirmed_stopped_job_ids: list[str] = Field(default_factory=list)
+
+
+class SuspensionAckRequest(BaseModel):
+    suspension_id: str
+
+
+class JobStopResultRequest(BaseModel):
+    success: bool
+    error: str = Field(default="", max_length=2000)
 
 
 class AbortRequest(BaseModel):

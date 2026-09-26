@@ -659,6 +659,7 @@ def test_monitor_executes_stop_command_once_for_terminal_job(monkeypatch) -> Non
             {
                 "id": "j001",
                 "status": "exhausted",
+                "stop_state": "pending",
                 "stop_command": "pkill -f gobuster || true",
                 "check_command": "true",
                 "created_at": "2026-09-06T00:00:00Z",

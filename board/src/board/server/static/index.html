@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Strikebox</title>
+<title>Strikebox / Operations</title>
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <script src="/static/vendor/tailwindcss.js"></script>
 <script src="/static/vendor/dagre.min.js"></script>
@@ -219,23 +219,38 @@
       fontFamily: { sans: ['-apple-system','BlinkMacSystemFont','Inter','Segoe UI','sans-serif'] },
       extend: {
         colors: {
-          brand: { 50:'#eef2ff',100:'#e0e7ff',200:'#c7d2fe',300:'#a5b4fc',400:'#818cf8',500:'#6366f1',600:'#4f46e5',700:'#4338ca',800:'#3730a3',900:'#312e81' }
+          slate: { 50:'#0d1618',100:'#1a282b',200:'#34484b',300:'#7d9693',400:'#8ea6a0',500:'#a3b8af',600:'#c1d0c7',700:'#dee9e0',800:'#e7f1e8',900:'#f0f8f0' },
+          brand: { 50:'#182719',100:'#263c25',200:'#405b37',300:'#83aa68',400:'#b0df87',500:'#a3ff6a',600:'#b6f28e',700:'#cbf6ae',800:'#d6f6c0',900:'#e9ffdb' },
+          teal: { 50:'#132a24',100:'#203c32',200:'#3b6450',300:'#79b799',400:'#91dfac',500:'#86e8ac',600:'#9aeabc',700:'#b6f3cf',800:'#d2f7e0',900:'#e5ffef' },
+          amber: { 50:'#2a2418',100:'#3d3220',200:'#65502f',300:'#b59a62',400:'#ffd385',500:'#e9b963',600:'#f7c975',700:'#fbd990',800:'#ffe5b2',900:'#fff3d7' },
+          rose: { 50:'#2b1b22',100:'#42282d',200:'#754049',300:'#ba7d85',400:'#ef939d',500:'#f88d97',600:'#ffabb3',700:'#ffc1c7',800:'#ffd3d7',900:'#ffe9eb' },
+          sky: { 50:'#17262c',100:'#223842',200:'#3a5966',300:'#7ea8b9',400:'#9bcfe4',500:'#7dc2df',600:'#a2d9ec',700:'#b9e5f3',800:'#d4f0f9',900:'#e8f9fe' },
+          violet: { 50:'#241f31',100:'#362d45',200:'#514664',300:'#9a8eae',400:'#c4a5e6',500:'#bba1df',600:'#cdb8ed',700:'#decaf8',800:'#e9dcff',900:'#f3ebff' },
+          orange: { 50:'#2a2418',100:'#3d3220',200:'#65502f',300:'#b59a62',400:'#ffd385',500:'#e9b963',600:'#f7c975',700:'#fbd990',800:'#ffe5b2',900:'#fff3d7' },
+          emerald: { 50:'#132a24',100:'#203c32',200:'#3b6450',300:'#79b799',400:'#91dfac',500:'#86e8ac',600:'#9aeabc',700:'#b6f3cf',800:'#d2f7e0',900:'#e5ffef' },
+          red: { 50:'#2b1b22',100:'#42282d',200:'#754049',300:'#ba7d85',400:'#ef939d',500:'#f88d97',600:'#ffabb3',700:'#ffc1c7',800:'#ffd3d7',900:'#ffe9eb' }
         }
       }
     }
   }
 </script>
+<link rel="stylesheet" href="/static/tactical.css?v=1">
+<script src="/static/tactical.js?v=1"></script>
+<link rel="stylesheet" href="/static/live-view.css?v=1">
+<script src="/static/live-view.js?v=1"></script>
+<script src="/static/suspension.js?v=1"></script>
 </head>
-<body class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden" :class="{ 'select-none cursor-col-resize': isResizingPanel }" x-data="boardApp()">
+<body class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden" :class="{ 'select-none cursor-col-resize': isResizingPanel }" :data-activity="(view === 'graph' ? activityMotionOn() : (connectionState === 'online' && visualEffectsOn())) ? 'on' : 'off'" x-data="boardApp()">
 
 <!-- ═══════════ PROJECT LIST VIEW ═══════════ -->
 <div x-show="view === 'list'" x-cloak class="flex-1 flex flex-col overflow-hidden">
-  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
+  <header class="console-header bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
     <div class="flex items-center gap-2.5 min-w-0">
-      <div class="h-8 w-8 rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/40 flex items-center justify-center shrink-0 overflow-hidden">
+      <div class="console-brandmark h-8 w-8 rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/40 flex items-center justify-center shrink-0 overflow-hidden">
         <img src="/static/favicon.svg" alt="" class="w-5 h-5 block">
       </div>
-      <span class="font-semibold text-slate-700 tracking-tight">Strikebox</span>
+      <span class="console-brand font-semibold text-slate-700 tracking-tight">Strikebox</span>
+      <span class="brand-caption">AUTONOMOUS<br>OPERATIONS</span>
     </div>
     <div class="flex-1"></div>
     <div class="flex items-center gap-3 text-[11px] text-slate-400">
@@ -247,7 +262,7 @@
         <span class="h-1.5 w-1.5 rounded-full bg-teal-500"></span>
         <span class="font-semibold text-teal-700 tabular-nums" x-text="countProjectsByStatus('active')"></span>
       </span>
-      <span class="inline-flex items-center gap-1.5 shrink-0" title="Stopped projects">
+      <span class="inline-flex items-center gap-1.5 shrink-0" title="Suspended projects">
         <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
         <span class="font-semibold text-amber-700 tabular-nums" x-text="countProjectsByStatus('stopped')"></span>
       </span>
@@ -262,46 +277,67 @@
       <button type="button"
         @click="stopAllActiveProjects()"
         :disabled="!hasActiveProjects() || isStoppingAllProjects"
-        class="h-7 px-2.5 rounded-lg border border-amber-200 text-xs text-amber-700 hover:bg-amber-50 transition inline-flex items-center gap-1.5 shrink-0 disabled:cursor-not-allowed disabled:opacity-40"
-        title="Stop all active projects">
+        class="stop-control h-7 px-2.5 rounded-lg border border-amber-200 text-xs text-amber-700 hover:bg-amber-50 transition inline-flex items-center gap-1.5 shrink-0 disabled:cursor-not-allowed disabled:opacity-40"
+        title="Suspend all active projects">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
-        <span x-text="isStoppingAllProjects ? 'Stopping...' : 'Stop Active'"></span>
+        <span x-text="isStoppingAllProjects ? 'Suspending...' : 'Suspend Active'"></span>
       </button>
     </div>
     <div class="flex items-center gap-1.5">
-      <button @click="showNewProject = true" class="h-7 px-2.5 rounded-lg border border-brand-200 text-xs text-brand-600 hover:bg-brand-50 transition inline-flex items-center gap-1.5">
+      <button @click="showNewProject = true" class="primary-action h-7 px-2.5 rounded-lg border border-brand-200 text-xs text-brand-600 hover:bg-brand-50 transition inline-flex items-center gap-1.5">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
         New Project
       </button>
     </div>
     <div class="flex items-center gap-1.5 ml-1">
-      <button @click="showLocalPrefs = true" class="h-7 max-w-40 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center shrink-0">
+      <button aria-label="Local preferences" title="Local preferences" @click="showLocalPrefs = true" class="h-7 max-w-40 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center shrink-0">
         <span class="truncate block" x-text="actorName()"></span>
       </button>
-      <button @click="loadSettings(); showSettings = true" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0">
+      <button aria-label="Server settings" title="Server settings" @click="loadSettings(); showSettings = true" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7 7 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a7 7 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a7 7 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a7 7 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"/><path d="M15 12a3 3 0 1 1-6 0-3 3 0 0 1 6 0Z"/></svg>
       </button>
     </div>
   </header>
 
-  <div x-ref="projectListScroll" @scroll.passive="rememberProjectListScroll()" class="flex-1 overflow-y-auto p-4">
+  <div x-ref="projectListScroll" @scroll.passive="rememberProjectListScroll()" class="portfolio-scroll flex-1 overflow-y-auto p-4">
+    <div class="portfolio-content">
+      <section class="ops-hero" aria-label="Operations overview">
+        <div>
+          <div class="eyebrow">Autonomous exploration / Human command</div>
+          <h1>Operations <span>control.</span></h1>
+          <p>Every intent mapped. Every discovery traceable.<br>Command the exploration. Inspect the evidence.</p>
+        </div>
+        <div class="hero-emblem" aria-hidden="true">
+          <span class="emblem-label">SB / CONTROL</span>
+          <img src="/static/favicon.svg" alt="">
+          <span class="emblem-coordinates">OBSERVE · ORIENT · DECIDE · ACT</span>
+        </div>
+      </section>
+      <section class="portfolio-metrics" aria-label="Project totals">
+        <div class="portfolio-metric"><div class="metric-heading">01 / Active operations</div><div class="metric-value signal" x-text="String(countProjectsByStatus('active')).padStart(2, '0')"></div><div class="metric-note"><span x-text="projects.length"></span> projects in workspace</div></div>
+        <div class="portfolio-metric"><div class="metric-heading">02 / Graph facts</div><div class="metric-value" x-text="String(portfolioTotal('fact_count')).padStart(2, '0')"></div><div class="metric-note">Origin, goal &amp; discoveries</div></div>
+        <div class="portfolio-metric"><div class="metric-heading">03 / Declared intents</div><div class="metric-value" x-text="String(portfolioTotal('intent_count')).padStart(2, '0')"></div><div class="metric-note">Exploration paths recorded</div></div>
+        <div class="portfolio-metric"><div class="metric-heading">04 / Working intents</div><div class="metric-value amber" x-text="String(portfolioTotal('working_intent_count')).padStart(2, '0')"></div><div class="metric-note"><span x-text="portfolioTotal('unclaimed_intent_count')"></span> unclaimed across projects</div></div>
+      </section>
+      <div class="section-heading"><h2>Project registry</h2><span><span x-text="String(projects.length).padStart(2, '0')"></span> OPERATIONS / ALL STATES</span></div>
+
     <template x-if="projects.length === 0">
-      <div class="flex flex-col items-center justify-center h-full text-slate-400">
+      <div class="portfolio-empty flex flex-col items-center justify-center text-slate-400">
         <img src="/static/favicon.svg" alt="" class="w-20 h-20 mb-5 opacity-30">
         <p class="text-lg font-medium text-slate-500">No projects yet</p>
         <p class="text-sm mt-1">Create a project to start exploring</p>
       </div>
     </template>
 
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+    <div class="project-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
       <template x-for="p in projects" :key="p.id">
-        <div @click="openProject(p.id)"
-          class="group h-full flex flex-col bg-white rounded-2xl border border-slate-200/60 p-5 cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-slate-200/50 hover:border-slate-300 hover:-translate-y-0.5">
+        <div @click="openProject(p.id)" @keydown.enter.self.prevent="openProject(p.id)" @keydown.space.self.prevent="openProject(p.id)" tabindex="0" role="link" :aria-label="`Open project ${p.title}`" :data-status="p.status"
+          class="project-card group h-full flex flex-col bg-white rounded-2xl border border-slate-200/60 p-5 cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-slate-200/50 hover:border-slate-300 hover:-translate-y-0.5">
           <div class="flex items-start justify-between mb-3">
             <span class="text-[11px] font-mono text-slate-400 tracking-wide" x-text="p.id"></span>
             <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold uppercase tracking-[0.12em]"
               :class="projectStatusBadgeClass(p.status)"
-              x-text="p.status"></span>
+              x-text="suspensionLabel(p)"></span>
           </div>
           <div class="mb-3 flex-1">
             <div class="title-action-trigger flex items-start gap-2">
@@ -332,11 +368,11 @@
           <div class="flex items-center gap-3 text-[11px] text-slate-400">
             <span class="flex items-center gap-1">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4m10-10h-4M6 12H2m15.07-7.07l-2.83 2.83M9.76 14.24l-2.83 2.83m11.14 0l-2.83-2.83M9.76 9.76L6.93 6.93"/></svg>
-              <span x-text="p.fact_count"></span>
+              <span><span x-text="p.fact_count"></span> facts</span>
             </span>
             <span class="flex items-center gap-1">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3"/></svg>
-              <span x-text="p.intent_count"></span>
+              <span><span x-text="p.intent_count"></span> intents</span>
             </span>
             <template x-if="p.working_intent_count > 0">
               <span class="flex items-center gap-1 text-amber-500">
@@ -352,7 +388,7 @@
             </template>
             <span class="flex items-center gap-1">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 1 1 7.072 0l-.548.547A3.374 3.374 0 0 0 14 18.469V19a2 2 0 1 1-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547Z"/></svg>
-              <span x-text="p.hint_count"></span>
+              <span><span x-text="p.hint_count"></span> hints</span>
             </span>
           </div>
           <div class="mt-1.5 flex items-center gap-1.5 text-[11px] text-slate-400">
@@ -374,7 +410,7 @@
                     : 'border-teal-200 text-teal-600 hover:bg-teal-50'">
                   <svg x-show="p.status === 'active'" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
                   <svg x-show="p.status === 'stopped'" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></svg>
-                  <span x-text="p.status === 'active' ? 'Stop' : 'Resume'"></span>
+                  <span x-text="p.status === 'active' ? 'Suspend' : 'Resume'"></span>
                 </button>
               </template>
               <template x-if="p.status === 'active' || p.status === 'stopped'">
@@ -402,14 +438,15 @@
         </div>
       </template>
     </div>
+    </div>
   </div>
 </div>
 
 <!-- ═══════════ GRAPH VIEW ═══════════ -->
 <template x-if="view === 'graph'">
 <div class="flex-1 flex flex-col overflow-hidden">
-  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0 z-20">
-    <button @click="backToList()" class="p-1.5 rounded-lg hover:bg-slate-100 transition text-slate-400 hover:text-slate-600">
+  <header class="console-header bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0 z-20">
+    <button aria-label="Back to projects" title="Back to projects" @click="backToList()" class="p-1.5 rounded-lg hover:bg-slate-100 transition text-slate-400 hover:text-slate-600">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7"/></svg>
     </button>
     <div class="title-action-trigger flex items-center gap-2 min-w-0">
@@ -423,7 +460,7 @@
       </button>
       <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold uppercase tracking-[0.12em] shrink-0"
         :class="projectStatusBadgeClass(project.project.status)"
-        x-text="project.project.status"></span>
+        x-text="suspensionLabel(project.project)"></span>
     </div>
     <div class="flex-1"></div>
     <div class="flex items-center gap-4 text-xs text-slate-400">
@@ -479,21 +516,21 @@
       </div>
       <template x-if="!replay.active && (project.project.status === 'active' || project.project.status === 'stopped')">
         <button @click="toggleProjectStop()"
-          class="px-2.5 py-1 rounded-lg border text-xs transition flex items-center gap-1.5"
+          class="stop-control px-2.5 py-1 rounded-lg border text-xs transition flex items-center gap-1.5"
           :class="project.project.status === 'active'
             ? 'border-amber-200 text-amber-600 hover:bg-amber-50'
             : 'border-teal-200 text-teal-600 hover:bg-teal-50'">
           <svg x-show="project.project.status === 'active'" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
           <svg x-show="project.project.status === 'stopped'" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></svg>
-          <span x-text="project.project.status === 'active' ? 'Stop' : 'Resume'"></span>
+          <span x-text="project.project.status === 'active' ? 'Suspend' : 'Resume'"></span>
         </button>
       </template>
       <template x-if="!replay.active && (project.project.status === 'active' || project.project.status === 'stopped')">
         <button @click="openAbortProject(project.project.id, project.project.title)"
-          class="px-2.5 py-1 rounded-lg border border-rose-200 text-xs text-rose-500 hover:bg-rose-50 transition flex items-center gap-1.5"
+          class="abort-control px-2.5 py-1 rounded-lg border border-rose-200 text-xs text-rose-500 hover:bg-rose-50 transition flex items-center gap-1.5"
           title="Abort — terminal, writes the final reports">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m5.5 5.5 13 13"/></svg>
-          Abort
+          Abort Mission
         </button>
       </template>
       <template x-if="!replay.active && project.project.status === 'completed'">
@@ -509,18 +546,29 @@
       </button>
     </div>
     <div class="flex items-center gap-1.5 ml-1">
-      <button @click="showLocalPrefs = true" class="h-7 max-w-40 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center shrink-0">
+      <button aria-label="Local preferences" title="Local preferences" @click="showLocalPrefs = true" class="h-7 max-w-40 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center shrink-0">
         <span class="truncate block" x-text="actorName()"></span>
       </button>
-      <button @click="loadSettings(); showSettings = true" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0">
+      <button aria-label="Server settings" title="Server settings" @click="loadSettings(); showSettings = true" class="h-7 w-7 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition inline-flex items-center justify-center shrink-0">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7 7 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a7 7 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a7 7 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a7 7 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"/><path d="M15 12a3 3 0 1 1-6 0-3 3 0 0 1 6 0Z"/></svg>
       </button>
     </div>
   </header>
 
+
+  <section class="ooda-strip" aria-label="OODA activity overview">
+    <div class="ooda-label"><strong>OODA / CONTROL</strong><span x-text="activityLabel()"></span></div>
+    <div class="ooda-phase"><div class="phase-name"><b>01</b>Observe</div><p><span x-text="operationCounts().facts"></span> discoveries</p></div>
+    <div class="ooda-phase" :class="{ 'is-busy': project.project.status === 'active' && project.project.reason }"><div class="phase-name"><b>02</b>Orient</div><p :title="project.project.reason?.worker || ''" x-text="project.project.reason ? project.project.reason.worker : 'Reasoner idle'"></p></div>
+    <div class="ooda-phase"><div class="phase-name"><b>03</b>Decide</div><p><span x-text="operationCounts().queued"></span> unclaimed intents</p></div>
+    <div class="ooda-phase" :class="{ 'is-busy': project.project.status === 'active' && operationCounts().running > 0 }"><div class="phase-name"><b>04</b>Act</div><p><span x-text="operationCounts().running"></span> working / <span x-text="operationCounts().concluded"></span> concluded</p></div>
+  </section>
+
+  <div x-show="!replay.active && project.project.status === 'stopped'" class="shrink-0 px-4 py-2 border-b border-amber-200 text-xs text-amber-600" role="status" x-text="suspensionMessage()"></div>
   <div class="flex-1 flex overflow-hidden" id="graphLayout">
     <!-- Graph -->
-    <div class="flex-1 relative min-w-0">
+    <div class="graph-workspace flex-1 relative min-w-0">
+      <div class="graph-toolbar">
       <div class="absolute top-3 left-3 z-10 flex items-center gap-1.5">
         <button @click="fitGraph()" class="h-7 w-7 bg-white/90 backdrop-blur rounded-lg shadow-sm border border-slate-200/60 text-slate-500 hover:text-slate-700 hover:bg-white transition inline-flex items-center justify-center" title="Fit graph" aria-label="Fit graph">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
@@ -535,33 +583,6 @@
           <option value="elk_lr">ELK →</option>
         </select>
       </div>
-
-      <template x-if="project.project.reason">
-        <div class="absolute top-14 right-3 z-10 max-w-80">
-          <div class="reason-panel-running relative overflow-hidden rounded-2xl border border-sky-200/80 bg-white/92 px-3.5 py-3 shadow-lg shadow-sky-100/60 backdrop-blur">
-            <div class="flex items-start gap-3">
-              <span class="reason-beacon mt-1 shrink-0"></span>
-              <div class="min-w-0">
-                <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-500">Reason Running</div>
-                <div class="mt-0.5 text-sm font-semibold text-slate-700 truncate" x-text="project.project.reason.worker"></div>
-                <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
-                  <span x-show="project.project.reason.trigger" x-text="`Trigger ${project.project.reason.trigger}`"></span>
-                  <span x-text="`Heartbeat ${formatTime(project.project.reason.last_heartbeat_at)}`"></span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </template>
-
-      <template x-if="project.project.reason">
-        <div class="reason-graph-scan z-[1]">
-          <span class="reason-graph-grid"></span>
-          <span class="reason-graph-ambient"></span>
-          <span class="reason-graph-scanline"></span>
-          <span class="reason-graph-sweep"></span>
-        </div>
-      </template>
 
       <div class="absolute top-3 right-3 z-10 flex flex-wrap justify-end gap-2">
         <div class="flex gap-1.5" x-show="projectIsActive()">
@@ -602,15 +623,144 @@
         </div>
       </div>
 
-      <div id="cy" class="relative z-0 flex-1 h-full"></div>
+
+      </div>
+      <div class="graph-stage">
+        <div class="graph-corner">FACT–INTENT TOPOLOGY</div>
+      <template x-if="project.project.reason">
+        <div class="graph-reason-panel absolute top-14 right-3 z-10 max-w-80">
+          <div class="reason-panel-running relative overflow-hidden rounded-2xl border border-sky-200/80 bg-white/92 px-3.5 py-3 shadow-lg shadow-sky-100/60 backdrop-blur">
+            <div class="flex items-start gap-3">
+              <span class="reason-beacon mt-1 shrink-0"></span>
+              <div class="min-w-0">
+                <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-500" x-text="connectionState === 'offline' && !replay.active ? 'Last known reasoner' : 'Reason Running'"></div>
+                <div class="mt-0.5 text-sm font-semibold text-slate-700 truncate" x-text="project.project.reason.worker"></div>
+                <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                  <span x-show="project.project.reason.trigger" x-text="`Trigger ${project.project.reason.trigger}`"></span>
+                  <span x-text="`Heartbeat ${formatTime(project.project.reason.last_heartbeat_at)}`"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <template x-if="project.project.reason">
+        <div class="reason-graph-scan z-[1]" x-show="activityMotionOn()" aria-hidden="true">
+          <span class="reason-graph-grid"></span>
+          <span class="reason-graph-ambient"></span>
+          <span class="reason-graph-scanline"></span>
+          <span class="reason-graph-sweep"></span>
+        </div>
+      </template>
+
+
+        <div id="cy" class="relative z-0 flex-1 h-full" aria-label="Interactive fact and intent graph"></div>
+      </div>
+      <div class="graph-legend" aria-label="Graph legend">
+        <span><i class="legend-key"></i>Known fact</span>
+        <span><i class="legend-key working"></i>Working intent</span>
+        <span><i class="legend-key unknown"></i>Unclaimed</span>
+        <span><i class="legend-key goal"></i>Goal</span>
+        <span class="legend-help">SCROLL TO ZOOM / DRAG TO PAN</span>
+      </div>
+      <section class="live-view" :class="{ 'is-expanded': liveExpanded }" :data-busy="activityMotionOn() && liveOperations().length > 0 ? 'on' : 'off'" aria-label="Live view">
+        <div class="live-sync-track" aria-hidden="true"><template x-for="sequence in [liveSyncSequence]" :key="sequence"><span></span></template></div>
+        <div class="live-heading">
+          <div class="live-heading-main">
+            <div class="live-signal" aria-hidden="true"><i></i><i></i><i></i></div>
+            <h2>LIVE VIEW</h2>
+            <span class="live-status" role="status" x-text="liveViewStatus()"></span>
+          </div>
+          <div class="live-heading-actions">
+            <button class="live-follow" x-show="!replay.active" @click="toggleLiveFollow()" :aria-pressed="liveFollow" :title="liveFollow ? 'Pause incoming findings while you read' : 'Show queued updates and follow new findings'" x-text="liveFollow ? 'Following new' : 'Follow paused'"></button>
+            <button @click="liveExpanded = !liveExpanded" :aria-expanded="liveExpanded" x-text="liveExpanded ? 'Reduce ↙' : 'Expand ↗'"></button>
+            <button @click="downloadProjectArtifact(selectedProjectId, 'report-human')" x-show="!replay.active">Human report ↓</button>
+            <button @click="sideTab = 'log'">Full log ↗</button>
+          </div>
+        </div>
+        <div class="live-view-body">
+          <div class="live-results">
+            <div class="live-tabs">
+              <div role="tablist" aria-label="Live view content" class="flex gap-4">
+                <button id="findings-tab" class="live-tab" role="tab" :aria-selected="liveTab === 'findings'" aria-controls="findings-panel" @click="liveTab = 'findings'">Findings <span x-text="replay.active ? '—' : liveFindings.length"></span></button>
+                <button id="activity-tab" class="live-tab" role="tab" :aria-selected="liveTab === 'activity'" aria-controls="activity-panel" @click="liveTab = 'activity'">Activity <span x-text="timelineEvents().length"></span></button>
+              </div>
+              <div class="live-filters" x-show="liveTab === 'findings' && !replay.active">
+                <select aria-label="Filter findings" x-model="liveFilter">
+                  <option value="all">All findings</option>
+                  <option value="priority" x-text="'Critical / high (' + findingSeverityCount(['critical', 'high']) + ')'"></option>
+                  <option value="critical">Critical</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                  <option value="info">Informational</option>
+                  <option value="negative" x-text="'Coverage (' + findingSeverityCount(['negative']) + ')'"></option>
+                </select>
+                <select aria-label="Sort findings" x-model="liveSort"><option value="recent">Most recent</option><option value="priority">By severity</option></select>
+              </div>
+            </div>
+            <div class="live-alert" role="status" x-show="liveError && !replay.active" x-text="liveError"></div>
+            <button class="live-pending" x-show="livePendingCount() > 0 && !replay.active" @click="followLiveFindings()" x-text="livePendingCount() + ' finding updates waiting · Show latest ↑'"></button>
+            <div id="findings-panel" role="tabpanel" aria-labelledby="findings-tab" class="finding-scroll" x-ref="findingScroll" x-show="liveTab === 'findings'" @scroll.passive="onFindingsScroll($event)" tabindex="0" aria-label="Scrollable findings">
+              <div class="live-empty" x-show="replay.active"><strong>Historical replay</strong>Current findings are available in the project’s live view. The Activity tab follows this replay.<br><button @click="exitProjectReplay()">Return to current findings ↗</button></div>
+              <div class="live-empty" x-show="!replay.active && !liveLoaded && !liveError"><strong>Connecting to report findings…</strong>Loading findings, recommendations, and supporting facts.</div>
+              <div class="live-empty" x-show="!replay.active && liveLoaded && liveFindings.length === 0"><strong>No structured findings recorded yet.</strong>Findings from the human report appear here as they arrive. Explore the Activity tab for discoveries already in the graph.</div>
+              <div class="live-empty" x-show="!replay.active && liveFindings.length > 0 && visibleLiveFindings().length === 0"><strong>No findings match this filter.</strong><button @click="liveFilter = 'all'">Show all findings</button></div>
+              <template x-for="finding in visibleLiveFindings()" :key="finding.id">
+                <article class="finding-card" :data-finding-id="finding.id" :data-severity="finding.severity" :class="{ 'is-new': liveNewIds.includes(finding.id) }">
+                  <div class="finding-meta">
+                    <span class="finding-severity" x-text="findingSeverity(finding.severity)"></span>
+                    <span x-text="finding.id"></span><span x-text="(finding.status || 'open').replaceAll('_', ' ')"></span>
+                    <span x-show="finding.category" x-text="finding.category"></span>
+                    <time :title="formatDate(finding.updated_at || finding.created_at)" x-text="formatTime(finding.updated_at || finding.created_at)"></time>
+                  </div>
+                  <h3 x-text="finding.title"></h3>
+                  <p class="finding-target" x-show="finding.affected_target" x-text="finding.affected_target"></p>
+                  <p class="finding-description" :class="{ 'finding-clamped': !findingIsOpen(finding.id) }" x-text="finding.description"></p>
+                  <div class="finding-recommendation" x-show="finding.recommendation"><strong>RECOMMENDED NEXT STEP</strong><p :class="{ 'finding-clamped': !findingIsOpen(finding.id) }" x-text="finding.recommendation"></p></div>
+                  <p class="finding-evidence" x-show="findingIsOpen(finding.id) && (finding.evidence_ids || []).length" x-text="'Evidence: ' + (finding.evidence_ids || []).join(', ')"></p>
+                  <div class="finding-actions">
+                    <button @click="toggleFinding(finding.id)" :aria-expanded="findingIsOpen(finding.id)" x-text="findingIsOpen(finding.id) ? 'Collapse details ↑' : 'Read full finding ↓'"></button>
+                    <button @click="inspectFinding(finding)" :disabled="!findingFactAvailable(finding)" :aria-label="'Inspect source fact ' + finding.fact_id" x-text="'Source ' + finding.fact_id + ' ↗'"></button>
+                    <span class="finding-lifecycle" x-show="!projectIsActive()" x-text="project.project.status === 'completed' ? 'Reopen to add intents' : project.project.status === 'stopped' ? 'Resume to add intents' : 'Project closed'"></span>
+                    <button class="finding-create" @click="createIntentFromFinding(finding)" :disabled="!projectIsActive() || !findingFactAvailable(finding)" :title="findingIntentHelp(finding)">+ Create intent</button>
+                  </div>
+                </article>
+              </template>
+            </div>
+            <div id="activity-panel" role="tabpanel" aria-labelledby="activity-tab" class="live-activity-scroll" x-show="liveTab === 'activity'" tabindex="0" aria-label="Scrollable activity">
+              <template x-for="entry in liveActivityEvents()" :key="'live-' + entry.id">
+                <button class="live-activity-row" @click="sideTab = 'log'; openTimelineEntry(entry)">
+                  <div><time x-text="formatTime(entry.timestamp)"></time><span x-text="'[' + entry.type.toUpperCase() + ']'"></span><span x-text="entry.actor"></span></div>
+                  <p x-text="entry.title"></p>
+                </button>
+              </template>
+              <div class="live-empty" x-show="timelineEvents().length === 0">Awaiting recorded activity.</div>
+            </div>
+          </div>
+          <aside class="live-operations" aria-label="Agent activity">
+            <h3 x-text="replay.active ? 'REPLAY ACTIVITY' : 'AGENT ACTIVITY'"></h3>
+            <div class="live-operation-idle" x-show="liveOperations().length === 0" x-text="activityLabel()"></div>
+            <template x-for="operation in liveOperations()" :key="operation.id">
+              <div class="live-operation"><div class="live-operation-meta"><span x-text="operation.kind"></span><span x-text="operation.worker"></span></div><p class="finding-clamped" :title="operation.text" x-text="operation.text"></p><small x-show="operation.heartbeat" x-text="'Heartbeat ' + formatTime(operation.heartbeat)"></small></div>
+            </template>
+            <h3 class="mt-4">LATEST RECORDED</h3>
+            <template x-for="entry in recentTelemetry().slice(0, 3)" :key="'rail-' + entry.id">
+              <button class="live-rail-event" @click="sideTab = 'log'; openTimelineEntry(entry)"><time x-text="formatTime(entry.timestamp)"></time><p class="finding-clamped" x-text="entry.title"></p></button>
+            </template>
+          </aside>
+        </div>
+      </section>
     </div>
 
-    <div @pointerdown.prevent="startPanelResize($event)" class="w-2 shrink-0 cursor-col-resize group flex items-stretch justify-center touch-none relative z-20">
+    <div @pointerdown.prevent="startPanelResize($event)" class="panel-resizer w-2 shrink-0 cursor-col-resize group flex items-stretch justify-center touch-none relative z-20">
       <div class="w-px bg-slate-200/70 transition group-hover:bg-brand-300" :class="{ 'bg-brand-400': isResizingPanel }"></div>
     </div>
 
     <!-- Side panel -->
-    <div class="border-l border-slate-200/60 bg-white flex flex-col overflow-hidden shrink-0 relative z-20" :style="{ width: sidePanelWidth + 'px', minWidth: sidePanelWidth + 'px', flexBasis: sidePanelWidth + 'px' }">
+    <div class="console-inspector border-l border-slate-200/60 bg-white flex flex-col overflow-hidden shrink-0 relative z-20" :style="{ width: sidePanelWidth + 'px', minWidth: sidePanelWidth + 'px', flexBasis: sidePanelWidth + 'px' }">
+      <div class="inspector-heading">OPERATOR INSPECTOR <span>SB / 02</span></div>
       <div class="flex border-b border-slate-100 shrink-0">
         <button @click="sideTab = 'detail'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
           :class="sideTab === 'detail' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">Detail</button>
@@ -894,6 +1044,13 @@
 </div>
 </template>
 
+
+<footer class="console-footer">
+  <span class="connection-indicator" :data-state="replay.active ? 'replay' : connectionState" role="status" x-text="connectionLabel()"></span>
+  <span class="footer-sync" x-text="lastSyncAt ? 'LAST SYNC ' + formatTime(lastSyncAt) + ' / POLL 5s' : 'WAITING FOR SERVER'"></span>
+  <button class="effects-control" @click="toggleVisualEffects()" :aria-pressed="visualEffectsOn()" :title="systemReducedMotion ? 'Your system requests reduced motion' : 'Toggle visual motion effects'" x-text="systemReducedMotion ? 'MOTION / SYSTEM REDUCED' : (effectsEnabled ? 'MOTION / ON' : 'MOTION / OFF')"></button>
+</footer>
+
 <!-- ═══════════ MODALS ═══════════ -->
 
 <!-- New Project -->
@@ -1160,6 +1317,46 @@
   </div>
 </div>
 
+<!-- Resume review -->
+<div x-show="showResumeModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @keydown.escape.window="if (!resumeBusy) showResumeModal = false" @click.self="if (!resumeBusy) showResumeModal = false">
+  <form @submit.prevent="submitResume()" role="dialog" aria-modal="true" aria-labelledby="resume-title" class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 p-6 border border-slate-200/60 max-h-[90vh] overflow-y-auto">
+    <h3 id="resume-title" class="text-base font-semibold text-slate-700">Resume project</h3>
+    <p class="text-sm text-slate-500 mt-1" x-text="resumeForm.title"></p>
+    <p class="text-xs text-slate-400 mt-3">Continue from the saved graph. Interrupted intents may restart their work. Exclude any you do not want retried.</p>
+    <label for="resume-notes" class="text-xs text-slate-500 mt-4 mb-1 block">Instructions for future work (optional)</label>
+    <textarea id="resume-notes" x-model="resumeForm.notes" maxlength="12000" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm" placeholder="Example: Do not repeat directory enumeration or high-volume requests. Use existing evidence until further review."></textarea>
+    <p class="text-[11px] text-slate-400 mt-1">These instructions are included in future worker prompts. The checked intent IDs below are blocked from dispatch.</p>
+    <fieldset class="mt-4" x-show="resumeForm.intents.length">
+      <legend class="text-xs font-semibold text-slate-500 mb-2">Exclude unfinished intents</legend>
+      <div class="max-h-56 overflow-y-auto border border-slate-200 rounded-xl p-3 space-y-3">
+        <template x-for="intent in resumeForm.intents" :key="intent.id">
+          <label class="flex items-start gap-2 text-xs text-slate-500 cursor-pointer">
+            <input type="checkbox" x-model="resumeForm.excluded" :value="intent.id" class="mt-1 shrink-0">
+            <span class="min-w-0"><strong class="font-mono text-slate-700" x-text="intent.id"></strong><span class="block whitespace-pre-wrap break-words mt-1" x-text="intent.description"></span></span>
+          </label>
+        </template>
+      </div>
+    </fieldset>
+    <div x-show="resumeCleanupJobs().length" class="mt-4 border border-amber-200 rounded-xl p-3 text-xs text-amber-600">
+      <p class="font-semibold">Background job cleanup</p>
+      <template x-for="job in resumeCleanupJobs()" :key="job.id">
+        <div class="mt-3">
+          <p class="break-words" x-text="job.id + ' · ' + job.description"></p>
+          <p class="mt-1" x-show="job.stop_state === 'pending'">Stop command pending. Resume is available after cleanup.</p>
+          <p class="mt-1" x-show="job.stop_state !== 'pending'" x-text="job.stop_error || 'No stop command was registered. Stop this process on its worker host first.'"></p>
+          <label x-show="job.stop_state !== 'pending'" class="flex items-center gap-2 mt-2"><input type="checkbox" x-model="resumeForm.confirmedJobs" :value="job.id">I verified this job is stopped on the worker host.</label>
+        </div>
+      </template>
+    </div>
+    <p x-show="resumeForm.waiting" class="text-xs text-amber-600 mt-4" role="status">Waiting for the dispatcher to finish stopping workers. Keep the dispatcher running.</p>
+    <p x-show="resumeError" x-text="resumeError" class="text-sm text-rose-500 mt-3" role="alert"></p>
+    <div class="flex justify-end gap-2 mt-5">
+      <button type="button" @click="showResumeModal = false" :disabled="resumeBusy" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl">Keep suspended</button>
+      <button type="submit" :disabled="resumeBlocked()" class="px-4 py-2 text-sm bg-brand-500 text-white rounded-xl disabled:opacity-40" x-text="resumeBusy ? 'Resuming…' : 'Resume'"></button>
+    </div>
+  </form>
+</div>
+
 <!-- Abort Project -->
 <div x-show="showAbortModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showAbortModal = false">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
@@ -1195,6 +1392,9 @@
 <script>
 function boardApp() {
   return {
+    ...tacticalConsole(),
+    ...liveFindingsView(),
+    ...suspensionControls(),
     view: 'list',
     projects: [],
     project: null,
@@ -1262,6 +1462,9 @@ function boardApp() {
     isStoppingAllProjects: false,
 
     async init() {
+      this.initTacticalConsole();
+      this.$watch('replay.playing', () => this.syncGraphMotion());
+      this.$watch('connectionState', () => this.syncGraphMotion());
       this._panelResizeMove = (e) => this.onPanelResize(e);
       this._panelResizeStop = () => this.stopPanelResize();
       window.addEventListener('pointermove', this._panelResizeMove);
@@ -1424,15 +1627,18 @@ function boardApp() {
     },
 
     openIntentNodeType(intent) {
+      if (intent.excluded) return 'excluded';
       if (this.isBootstrapIntent(intent)) return intent.worker ? 'bootstrap_running' : 'bootstrap_pending';
       return intent.worker ? 'in_progress' : 'unclaimed';
     },
 
     openIntentNodeLabel(intent) {
+      if (intent.excluded) return 'Excluded';
       return this.isBootstrapIntent(intent) ? 'Bootstrap' : '?';
     },
 
     openIntentNodeSize(intent) {
+      if (intent.excluded) return { width: 70, height: 26 };
       if (this.isBootstrapIntent(intent)) return { width: 82, height: 30 };
       return { width: 22, height: 22 };
     },
@@ -1458,7 +1664,10 @@ function boardApp() {
     },
 
     async loadProjects() {
-      try { this.projects = await this.api('GET', '/projects'); } catch(e) { console.error(e); }
+      try { this.projects = await this.api('GET', '/projects');
+        if (this.showResumeModal && this.resumeForm.id !== this.selectedProjectId) {
+          this.syncResumeState(await this.api('GET', `/projects/${this.resumeForm.id}`));
+        } this.markSyncSuccess(); } catch(e) { this.markSyncFailure(); console.error(e); }
     },
 
     rememberProjectListScroll() {
@@ -1746,17 +1955,23 @@ function boardApp() {
 
     async loadProject(id) {
       try {
-        this.project = await this.api('GET', `/projects/${id}`);
+        const detail = await this.api('GET', `/projects/${id}`);
+        if (this.selectedProjectId !== id) return;
+        this.project = detail;
+        this.syncResumeState(detail);
+        this.loadLiveFindings(id);
+        this.markSyncSuccess();
         if (this.project && Array.isArray(this.project.jobs)) {
           for (const j of this.project.jobs) j.elapsed = this.jobElapsedLabel(j);
         }
-      } catch(e) { this.showToast(e.message, 'error'); }
+      } catch(e) { this.markSyncFailure(); this.showToast(e.message, 'error'); }
     },
 
     async toggleProjectStop() {
       if (!this.selectedProjectId || !this.project) return;
       if (!['active', 'stopped'].includes(this.project.project.status)) return;
-      const nextStatus = this.project.project.status === 'active' ? 'stopped' : 'active';
+      if (this.project.project.status === 'stopped') return this.openResumeProject(this.selectedProjectId);
+      const nextStatus = 'stopped';
       try {
         await this.setProjectStatus(this.selectedProjectId, nextStatus);
       } catch (e) {
@@ -1766,7 +1981,8 @@ function boardApp() {
 
     async toggleProjectStopById(projectId, currentStatus) {
       if (!projectId || !['active', 'stopped'].includes(currentStatus)) return;
-      const nextStatus = currentStatus === 'active' ? 'stopped' : 'active';
+      if (currentStatus === 'stopped') return this.openResumeProject(projectId);
+      const nextStatus = 'stopped';
       try {
         await this.setProjectStatus(projectId, nextStatus);
       } catch (e) {
@@ -1810,12 +2026,10 @@ function boardApp() {
       const updated = await this.api('PUT', `/projects/${projectId}/status`, { status });
       const projectSummary = this.projects.find(item => item.id === projectId);
       if (projectSummary) {
-        projectSummary.status = updated.status;
-        projectSummary.reason = updated.reason;
+        Object.assign(projectSummary, updated);
       }
       if (this.selectedProjectId === projectId && this.project) {
-        this.project.project.status = updated.status;
-        this.project.project.reason = updated.reason;
+        Object.assign(this.project.project, updated);
         if (!this.projectIsActive()) {
           this.showIntentModal = false;
           this.showConcludeModal = false;
@@ -1825,8 +2039,14 @@ function boardApp() {
           this.showHintModal = false;
         }
       }
-      if (reload) await this.loadProjects();
-      if (toast) this.showToast(status === 'stopped' ? 'Project stopped' : 'Project resumed');
+      if (reload) {
+        await this.loadProjects();
+        if (this.selectedProjectId === projectId) {
+          await this.loadProject(projectId);
+          this.updateGraph();
+        }
+      }
+      if (toast) this.showToast(status === 'stopped' ? 'Suspension requested' : 'Project resumed');
       return updated;
     },
 
@@ -1842,9 +2062,9 @@ function boardApp() {
         const successCount = results.filter(result => result.status === 'fulfilled').length;
         const failureCount = results.length - successCount;
         if (failureCount === 0) {
-          this.showToast(`Stopped ${successCount} active project${successCount === 1 ? '' : 's'}`);
+          this.showToast(`Suspended ${successCount} active project${successCount === 1 ? '' : 's'}`);
         } else {
-          this.showToast(`Stopped ${successCount} projects, ${failureCount} failed`, 'error');
+          this.showToast(`Suspended ${successCount} projects, ${failureCount} failed`, 'error');
         }
       } catch (e) {
         this.showToast(e.message, 'error');
@@ -2278,6 +2498,7 @@ function boardApp() {
       }
       this.rememberProjectListScroll();
       this.selectedProjectId = id;
+      this.resetLiveFindings(id);
       this.selectedNode = null;
       this.selectedFacts = [];
       this.selectedTimelineEntryId = null;
@@ -2310,6 +2531,7 @@ function boardApp() {
         this.polling = true;
       }
       this.view = 'list';
+      this.resetLiveFindings();
       this.shouldRestoreProjectListScroll = true;
       this.project = null;
       this.selectedProjectId = '';
@@ -2388,7 +2610,7 @@ function boardApp() {
         container,
         elements: [...nodes, ...edges],
         style: this.graphStyles(),
-        layout: this.layoutOpts(),
+        layout: this.layoutOpts(false),
         minZoom: 0.15, maxZoom: 3.5,
       });
       this.cy = rawCy;
@@ -2401,34 +2623,37 @@ function boardApp() {
     },
 
     graphStyles() {
-      const common = { 'text-valign':'center','text-halign':'center','font-family':'-apple-system,BlinkMacSystemFont,Inter,sans-serif' };
+      const common = { 'text-valign':'center','text-halign':'center','font-family':'Consolas,Liberation Mono,monospace' };
       return [
-        { selector: 'node[nodeType="origin"]', style: { ...common, shape:'round-rectangle','background-color':'#14b8a6',label:'data(label)',color:'#fff','font-size':'11px','font-weight':'bold','text-wrap':'wrap','text-max-width':'92px','text-overflow-wrap':'anywhere',width:'data(width)',height:'data(height)','border-width':0 }},
-        { selector: 'node[nodeType="goal"]', style: { ...common, shape:'round-rectangle','background-color':'#f43f5e',label:'data(label)',color:'#fff','font-size':'11px','font-weight':'bold','text-wrap':'wrap','text-max-width':'92px','text-overflow-wrap':'anywhere',width:'data(width)',height:'data(height)','border-width':0 }},
-        { selector: 'node[nodeType="fact"]', style: { ...common, shape:'round-rectangle','background-color':'#6366f1',label:'data(label)',color:'#fff','font-size':'10px','font-weight':'bold','text-wrap':'wrap','text-max-width':'116px','text-overflow-wrap':'anywhere',width:'data(width)',height:'data(height)','border-width':0 }},
-        { selector: 'node[nodeType="in_progress"]', style: { ...common, shape:'ellipse','background-color':'#f59e0b','background-opacity':0.8,label:'?',color:'#fff','font-size':'11px','font-weight':'bold',width:22,height:22,'border-width':2,'border-color':'#d97706' }},
-        { selector: 'node[nodeType="unclaimed"]', style: { ...common, shape:'ellipse','background-color':'#cbd5e1','background-opacity':0.5,label:'?',color:'#94a3b8','font-size':'11px','font-weight':'bold',width:20,height:20,'border-width':1.5,'border-color':'#94a3b8','border-style':'dashed' }},
-        { selector: 'node[nodeType="bootstrap_pending"]', style: { ...common, shape:'round-rectangle','background-color':'#fff7ed','background-opacity':0.96,label:'data(label)',color:'#c2410c','font-size':'10px','font-weight':'bold',width:'data(width)',height:'data(height)','border-width':1.5,'border-color':'#fdba74','border-style':'dashed','text-wrap':'wrap','text-max-width':'70px' }},
-        { selector: 'node[nodeType="bootstrap_running"]', style: { ...common, shape:'round-rectangle','background-color':'#fb923c','background-opacity':0.96,label:'data(label)',color:'#fff7ed','font-size':'10px','font-weight':'bold',width:'data(width)',height:'data(height)','border-width':2,'border-color':'#ea580c','text-wrap':'wrap','text-max-width':'70px' }},
+        { selector: 'node[nodeType="origin"]', style: { ...common, shape:'round-rectangle','background-color':'#233d22',label:'data(label)',color:'#def6cb','font-size':'11px','font-weight':'bold','text-wrap':'wrap','text-max-width':'92px','text-overflow-wrap':'whitespace',width:'data(width)',height:'data(height)','border-width':1.4,'border-color':'#a3ff6a' }},
+        { selector: 'node[nodeType="goal"]', style: { ...common, shape:'round-rectangle','background-color':'#162d38',label:'data(label)',color:'#bfe7f7','font-size':'11px','font-weight':'bold','text-wrap':'wrap','text-max-width':'92px','text-overflow-wrap':'whitespace',width:'data(width)',height:'data(height)','border-width':1.4,'border-color':'#82c4e5' }},
+        { selector: 'node[nodeType="fact"]', style: { ...common, shape:'round-rectangle','background-color':'#172a21',label:'data(label)',color:'#d9ebd6','font-size':'10px','font-weight':'bold','text-wrap':'wrap','text-max-width':'116px','text-overflow-wrap':'whitespace',width:'data(width)',height:'data(height)','border-width':1,'border-color':'#689b60' }},
+        { selector: 'node[nodeType="in_progress"]', style: { ...common, shape:'ellipse','background-color':'#ae7b29','background-opacity':0.8,label:'?',color:'#fff','font-size':'11px','font-weight':'bold',width:22,height:22,'border-width':2,'border-color':'#ffc766' }},
+        { selector: 'node[nodeType="unclaimed"]', style: { ...common, shape:'hexagon','background-color':'#1c2b29','background-opacity':0.5,label:'?',color:'#9ab5a7','font-size':'11px','font-weight':'bold',width:20,height:20,'border-width':1.5,'border-color':'#9ab5a7','border-style':'dashed' }},
+        { selector: 'node[nodeType="excluded"]', style: { ...common, shape:'round-rectangle', label:'data(label)', width:'data(width)', height:'data(height)', 'background-color':'#222a2a', color:'#819494', 'font-size':'10px', 'border-width':1, 'border-color':'#586867', 'border-style':'dashed' }},
+        { selector: 'edge[status="excluded"]', style: { width:1, 'line-color':'#586867', 'line-style':'dotted', 'target-arrow-color':'#586867', 'target-arrow-shape':'triangle', 'curve-style':'bezier', opacity:0.6 }},
+        { selector: 'node[nodeType="bootstrap_pending"]', style: { ...common, shape:'round-rectangle','background-color':'#1c2119','background-opacity':0.96,label:'data(label)',color:'#e8c482','font-size':'10px','font-weight':'bold',width:'data(width)',height:'data(height)','border-width':1.5,'border-color':'#b89453','border-style':'dashed','text-wrap':'wrap','text-max-width':'70px' }},
+        { selector: 'node[nodeType="bootstrap_running"]', style: { ...common, shape:'round-rectangle','background-color':'#70552a','background-opacity':0.96,label:'data(label)',color:'#1c2119','font-size':'10px','font-weight':'bold',width:'data(width)',height:'data(height)','border-width':2,'border-color':'#ffc766','text-wrap':'wrap','text-max-width':'70px' }},
 
-        { selector: 'edge[status="concluded"]', style: { width:2,'line-color':'#6ee7b7','target-arrow-color':'#6ee7b7','target-arrow-shape':'triangle','curve-style':'bezier',label:'data(label)','font-size':'7px',color:'#94a3b8','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'80px','text-wrap':'ellipsis','text-background-color':'#f8fafc','text-background-opacity':0.85,'text-background-padding':'2px','text-events':'yes','arrow-scale':0.9 }},
-        { selector: 'edge[status="in_progress"]', style: { width:2,'line-color':'#fbbf24','line-style':'dashed','line-dash-pattern':[8,4],'line-dash-offset':0,'target-arrow-color':'#fbbf24','target-arrow-shape':'triangle','curve-style':'bezier',label:'data(label)','font-size':'7px',color:'#b45309','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'80px','text-wrap':'ellipsis','text-background-color':'#fffbeb','text-background-opacity':0.85,'text-background-padding':'2px','text-events':'yes','arrow-scale':0.9 }},
-        { selector: 'edge[status="unclaimed"]', style: { width:1.5,'line-color':'#cbd5e1','line-style':'dashed','line-dash-pattern':[5,5],'target-arrow-color':'#cbd5e1','target-arrow-shape':'triangle','curve-style':'bezier',label:'data(label)','font-size':'7px',color:'#94a3b8','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'80px','text-wrap':'ellipsis','text-background-color':'#f8fafc','text-background-opacity':0.85,'text-background-padding':'2px','text-events':'yes','arrow-scale':0.7 }},
-        { selector: 'edge[status="bootstrap_pending"]', style: { width:2,'line-color':'#fdba74','line-style':'dashed','line-dash-pattern':[8,4],'line-dash-offset':0,'target-arrow-color':'#fdba74','target-arrow-shape':'triangle','curve-style':'bezier',label:'data(label)','font-size':'7px',color:'#c2410c','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'88px','text-wrap':'ellipsis','text-background-color':'#fff7ed','text-background-opacity':0.92,'text-background-padding':'2px','text-events':'yes','arrow-scale':0.85 }},
-        { selector: 'edge[status="bootstrap_running"]', style: { width:2.5,'line-color':'#fb923c','line-style':'dashed','line-dash-pattern':[10,4],'line-dash-offset':0,'target-arrow-color':'#fb923c','target-arrow-shape':'triangle','curve-style':'bezier',label:'data(label)','font-size':'7px',color:'#c2410c','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'88px','text-wrap':'ellipsis','text-background-color':'#fff7ed','text-background-opacity':0.92,'text-background-padding':'2px','text-events':'yes','arrow-scale':0.95 }},
+        { selector: 'edge[status="concluded"]', style: { width:2,'line-color':'#70aa69','target-arrow-color':'#70aa69','target-arrow-shape':'triangle','curve-style':'bezier',label:'data(label)','font-size':'7px',color:'#9ab5a7','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'80px','text-wrap':'ellipsis','text-background-color':'#0a1113','text-background-opacity':0.85,'text-background-padding':'2px','text-events':'yes','arrow-scale':0.9 }},
+        { selector: 'edge[status="in_progress"]', style: { width:2,'line-color':'#ffc766','line-style':'dashed','line-dash-pattern':[8,4],'line-dash-offset':0,'target-arrow-color':'#ffc766','target-arrow-shape':'triangle','curve-style':'bezier',label:'data(label)','font-size':'7px',color:'#e4be7a','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'80px','text-wrap':'ellipsis','text-background-color':'#0a1113','text-background-opacity':0.85,'text-background-padding':'2px','text-events':'yes','arrow-scale':0.9 }},
+        { selector: 'edge[status="unclaimed"]', style: { width:1.5,'line-color':'#526b66','line-style':'dashed','line-dash-pattern':[5,5],'target-arrow-color':'#526b66','target-arrow-shape':'triangle','curve-style':'bezier',label:'data(label)','font-size':'7px',color:'#9ab5a7','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'80px','text-wrap':'ellipsis','text-background-color':'#0a1113','text-background-opacity':0.85,'text-background-padding':'2px','text-events':'yes','arrow-scale':0.7 }},
+        { selector: 'edge[status="bootstrap_pending"]', style: { width:2,'line-color':'#b89453','line-style':'dashed','line-dash-pattern':[8,4],'line-dash-offset':0,'target-arrow-color':'#b89453','target-arrow-shape':'triangle','curve-style':'bezier',label:'data(label)','font-size':'7px',color:'#e8c482','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'88px','text-wrap':'ellipsis','text-background-color':'#1c2119','text-background-opacity':0.92,'text-background-padding':'2px','text-events':'yes','arrow-scale':0.85 }},
+        { selector: 'edge[status="bootstrap_running"]', style: { width:2.5,'line-color':'#70552a','line-style':'dashed','line-dash-pattern':[10,4],'line-dash-offset':0,'target-arrow-color':'#70552a','target-arrow-shape':'triangle','curve-style':'bezier',label:'data(label)','font-size':'7px',color:'#e8c482','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'88px','text-wrap':'ellipsis','text-background-color':'#1c2119','text-background-opacity':0.92,'text-background-padding':'2px','text-events':'yes','arrow-scale':0.95 }},
         { selector: 'edge[edgeType="bootstrap_scope"]', style: { label:'',width:1.8,'curve-style':'bezier','line-style':'dotted','line-dash-pattern':[2,5],'target-arrow-shape':'triangle-backcurve','arrow-scale':0.75,'target-distance-from-node':2 }},
 
         { selector: '.highlight', style: { 'z-index':999 }},
         { selector: 'edge.highlight', style: { 'z-index':999 }},
-        { selector: 'node.focus', style: { 'border-width':3,'border-color':'#312e81','border-opacity':0.95,'z-index':1000 }},
-        { selector: 'edge.focus', style: { 'z-index':1000,'overlay-color':'#93c5fd','overlay-opacity':0.22,'overlay-padding':5 }},
-        { selector: 'node.selected-fact', style: { 'border-width':0,'underlay-color':'#93c5fd','underlay-padding':8,'underlay-opacity':0.28,'z-index':1001 }},
+        { selector: 'node.focus', style: { 'border-width':3,'border-color':'#c3ff90','border-opacity':0.95,'z-index':1000 }},
+        { selector: 'edge.focus', style: { 'z-index':1000,'overlay-color':'#adff77','overlay-opacity':0.22,'overlay-padding':5 }},
+        { selector: 'node.selected-fact', style: { 'border-width':0,'underlay-color':'#adff77','underlay-padding':8,'underlay-opacity':0.28,'z-index':1001 }},
         { selector: '.faded', style: { opacity:0.5 }},
         { selector: '.fresh', style: { opacity:0 }},
       ];
     },
 
     layoutOpts(animate = true) {
+      animate = animate && this.visualEffectsOn();
       const direction = this.layoutDirection();
       if (this.layoutEngine() === 'elk') {
         const elkDirection = direction === 'TB' ? 'DOWN' : 'RIGHT';
@@ -2532,7 +2757,7 @@ function boardApp() {
     },
 
     fadeInFreshElement(element) {
-      if (!element || element.length === 0) return;
+      if (!element || element.length === 0 || !this.visualEffectsOn()) return;
       element.addClass('fresh');
       setTimeout(() => {
         if (!element.inside()) return;
@@ -2595,6 +2820,7 @@ function boardApp() {
 
     pulseActive() {
       if (!this.cy) return;
+      if (!this.activityMotionOn()) { this.syncGraphMotion(); return; }
       this.cy.nodes('[nodeType="in_progress"], [nodeType="bootstrap_running"]').forEach(node => {
         if (node.scratch('_pulseActive')) return;
         node.scratch('_pulseActive', true);
@@ -2602,14 +2828,16 @@ function boardApp() {
         const minOpacity = isBootstrap ? 0.55 : 0.35;
         const maxOpacity = isBootstrap ? 0.98 : 0.8;
         const pulseOut = () => {
-          if (!node.inside()) {
+          if (!node.inside() || !this.activityMotionOn() || !['in_progress', 'bootstrap_running'].includes(node.data('nodeType'))) {
+            node.removeStyle('background-opacity');
             node.removeScratch('_pulseActive');
             return;
           }
           node.animate({ style:{'background-opacity':minOpacity} }, { duration:900, complete: pulseIn });
         };
         const pulseIn = () => {
-          if (!node.inside()) {
+          if (!node.inside() || !this.activityMotionOn() || !['in_progress', 'bootstrap_running'].includes(node.data('nodeType'))) {
+            node.removeStyle('background-opacity');
             node.removeScratch('_pulseActive');
             return;
           }
@@ -2623,14 +2851,14 @@ function boardApp() {
         const isBootstrap = edge.data('status') === 'bootstrap_running';
         const dashOffset = isBootstrap ? -16 : -12;
         const flow = () => {
-          if (!edge.inside() || !['in_progress', 'bootstrap_running'].includes(edge.data('status'))) {
+          if (!edge.inside() || !this.activityMotionOn() || !['in_progress', 'bootstrap_running'].includes(edge.data('status'))) {
             edge.removeScratch('_flowActive');
             return;
           }
           edge.animate({ style:{'line-dash-offset':dashOffset} }, {
             duration:isBootstrap ? 620 : 700,
             complete:() => {
-              if (!edge.inside() || !['in_progress', 'bootstrap_running'].includes(edge.data('status'))) {
+              if (!edge.inside() || !this.activityMotionOn() || !['in_progress', 'bootstrap_running'].includes(edge.data('status'))) {
                 edge.removeScratch('_flowActive');
                 return;
               }
@@ -2648,7 +2876,7 @@ function boardApp() {
     centerGraphOnElements(eles) {
       if (!this.cy || !eles || eles.length === 0) return;
       if (this._centerAnimation) this._centerAnimation.stop();
-      this._centerAnimation = this.cy.animation({ center: { eles }, duration: 220, easing: 'ease-in-out-cubic' });
+      this._centerAnimation = this.cy.animation({ center: { eles }, duration: this.visualEffectsOn() ? 220 : 0, easing: 'ease-in-out-cubic' });
       this._centerAnimation.play();
     },
 
@@ -2842,7 +3070,7 @@ function boardApp() {
       const nt = node.data('nodeType');
       const keepLogFocus = this.sideTab === 'log';
 
-      if (['in_progress', 'unclaimed', 'bootstrap_pending', 'bootstrap_running'].includes(nt)) {
+      if (['in_progress', 'unclaimed', 'bootstrap_pending', 'bootstrap_running', 'excluded'].includes(nt)) {
         this.selectIntent(node.data('intentId'));
         if (keepLogFocus) this.scrollTimelineToSelection();
         else this.sideTab = 'detail';
@@ -3038,7 +3266,7 @@ function boardApp() {
 
     selectedOpenIntentRecord() {
       const intent = this.selectedIntentRecord();
-      if (!intent || intent.to || !this.projectIsActive()) return null;
+      if (!intent || intent.to || intent.excluded || !this.projectIsActive()) return null;
       return intent;
     },
 
@@ -3077,6 +3305,7 @@ function boardApp() {
       return i.worker ? 'text-amber-600' : 'text-slate-400';
     },
     intentStatusLabel(i) {
+      if (i.excluded) return 'Excluded';
       if (i.to) return 'Concluded';
       if (this.isBootstrapIntent(i)) return i.worker ? 'Bootstrap Running' : 'Bootstrap Pending';
       return i.worker ? 'In Progress' : 'Unclaimed';
@@ -3087,7 +3316,7 @@ function boardApp() {
       return i.priority_set_by ? `${base} · human` : base;
     },
     isOpenIntent(i) {
-      return !!i && !i.to && !i.concluded_at;
+      return !!i && !i.excluded && !i.to && !i.concluded_at;
     },
     jobStatusClass(status) {
       switch (status) {

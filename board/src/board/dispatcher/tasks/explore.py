@@ -5,7 +5,7 @@ import time
 
 from board.dispatcher.config import DispatchConfig, WorkerConfig
 from board.dispatcher.contracts import parse_json_output, validate_explore_payload
-from board.dispatcher.prompting import load_prompt, render_prompt
+from board.dispatcher.prompting import load_prompt, render_prompt, with_execution_constraints
 from board.dispatcher.protocol.client import BoardClient
 from board.dispatcher.runtime.cancellation import TaskCancellation
 from board.dispatcher.runtime.containers import ContainerManager
@@ -104,6 +104,7 @@ def run_explore_task(
             },
         )
 
+        prompt = with_execution_constraints(prompt, project)
         session = driver.prepare_session()
         execute = driver.build_execute(worker, prompt, session)
         session = execute.session
@@ -311,6 +312,7 @@ def _try_conclude_fallback(
             "intent_description": intent.description,
         },
     )
+    prompt = with_execution_constraints(prompt, client.get_project(project_id))
     conclude_argv = driver.build_conclude(worker, prompt, session)
     LOG.info("starting conclude fallback project=%s intent=%s worker=%s", project_id, intent.id, worker.name)
     conclude_started = time.perf_counter()

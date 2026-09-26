@@ -1,0 +1,15 @@
+# Suspend and resume
+
+Click **Suspend** on a project card or in the project header. The project stops accepting new worker actions immediately. The dispatcher cancels its managed workers on its next poll, and heartbeats also reject suspended work. The badge shows **suspending** until the dispatcher has observed worker exit and completed container cleanup. Keep the dispatcher service running so it can finish cleanup. There is no timer and no automatic resume.
+
+Facts, findings, evidence, hints, intent descriptions, and project workspaces are retained. Suspension ends worker processes; it does not freeze their memory. After **Resume**, unfinished intents may restart their work using the saved graph and workspace.
+
+Click **Resume** to review optional execution instructions and check unfinished intents to exclude. Excluded intents stay visible in the graph and cannot be claimed, concluded, or dispatched. To allow one again, suspend and uncheck it at the next resume. Instructions are saved on the project and included in subsequent planning, bootstrap, exploration, and conclusion prompts. They are model instructions, not a network firewall or command filter. Avoiding a broader activity requires these instructions in addition to excluding its existing intent IDs.
+
+For a temporary host block: suspend, leave the project paused until you decide it is appropriate to proceed, then exclude the relevant unfinished enumeration intents and add instructions such as “Do not repeat directory enumeration or high-volume requests. Use saved evidence until further review.” Completed intents are already finished; the instructions tell future planners not to recreate that work. Only you initiate Resume.
+
+Registered background jobs are ended, not automatically restarted. Their output remains available. The dispatcher executes registered stop commands even while a project is suspended, and persists the result. Resume waits for cleanup. If a command fails or was never registered, stop the process on its worker host, verify it has stopped, and check the corresponding confirmation in the Resume dialog. Board cannot track an unregistered detached process. Stop commands should be idempotent: a dispatcher crash between execution and acknowledgement can require retrying a pending command.
+
+**Abort Mission** remains terminal. Use Suspend when you intend to return.
+
+API compatibility: the existing `PUT /projects/{id}/status` with `{"status":"stopped"}` now requests suspension. Resume uses `{"status":"active"}` with optional `execution_notes`, `excluded_intent_ids`, and `confirmed_stopped_job_ids`. Omitting notes or exclusions preserves their current values. Resume returns 409 while worker acknowledgement or job cleanup is outstanding. The dispatcher acknowledges a specific suspension generation through `POST /projects/{id}/suspension/ack`; stale acknowledgements cannot unlock a later suspension. Suspension and resume are recorded as human hints. Existing stopped projects receive the same cleanup barrier on database migration.

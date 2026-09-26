@@ -8,6 +8,7 @@ import time
 from board.dispatcher.config import DispatchConfig, WorkerConfig
 from board.dispatcher.contracts import parse_json_output, validate_reason_payload
 from board.dispatcher.prompting import (
+    with_execution_constraints,
     format_fact_ids,
     format_open_intents,
     load_prompt,
@@ -94,7 +95,7 @@ def run_reason_task(
                 "assigned_worker": intent.assigned_worker,
             }
             for intent in project.intents
-            if intent.to is None
+            if intent.to is None and not intent.excluded
         ]
         allowed_fact_ids = [fact.id for fact in project.facts if fact.id != "goal"]
         LOG.debug(
@@ -124,6 +125,7 @@ def run_reason_task(
             },
         )
 
+        prompt = with_execution_constraints(prompt, project)
         session = driver.prepare_session()
         if worker.type == "pi":
             # Pass the complete graph as a file attachment: one bounded model
@@ -270,9 +272,9 @@ def run_reason_task(
             # A human can add intents while planning runs. Recheck capacity and
             # exact duplicates immediately before writing the proposed batch.
             current = client.get_project(project.project.id)
-            current_open = [intent for intent in current.intents if intent.to is None]
+            current_open = [intent for intent in current.intents if intent.to is None and not intent.excluded]
             available = max(0, config.tasks.reason.target_open_intents - len(current_open))
-            existing = {(tuple(sorted(intent.from_)), intent.description.strip().casefold()) for intent in current_open}
+            existing = {(tuple(sorted(intent.from_)), intent.description.strip().casefold()) for intent in current.intents if intent.to is None}
             if available == 0:
                 return "success"
             for intent_data in data:
