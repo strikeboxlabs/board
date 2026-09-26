@@ -136,6 +136,7 @@ class LocalBackend:
 
     def worker_env(self, project_id: str, intent_id: str | None = None) -> dict[str, str]:
         return {
+            "BOARD_PROJECT_ID": project_id,
             "BOARD_PROJECT_DIR": str(self.project_dir(project_id)),
             "BOARD_EVIDENCE_DIR": str(self.evidence_dir(project_id, intent_id)),
         }

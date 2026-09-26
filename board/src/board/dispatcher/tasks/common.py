@@ -105,8 +105,24 @@ def run_worker_process(
         lease.attach_process(process)
     if cancellation is not None:
         cancellation.attach_process(process)
+    started = time.monotonic()
     try:
-        return process.communicate(timeout=communicate_timeout(timeout_seconds))
+        result = process.communicate(timeout=communicate_timeout(timeout_seconds))
+        project_id = (env_extra or {}).get("BOARD_PROJECT_ID")
+        if project_id:
+            try:
+                from board.dispatcher.metrics import record_metric
+                from board.dispatcher.workers.adapters.pi import PiDriver
+                diagnostic = PiDriver.output_diagnostics(result.stdout) if worker.type == "pi" else {"usage_available": False}
+                record_metric(container_manager, project_id, {
+                    "event": "process", "phase": phase, "worker": worker.name,
+                    "elapsed_seconds": round(time.monotonic() - started, 3),
+                    "returncode": result.returncode, "timed_out": result.timed_out,
+                    "cancelled": result.cancelled, **diagnostic,
+                })
+            except Exception:
+                LOG.exception("could not collect process metrics project=%s", project_id)
+        return result
     finally:
         if lease is not None:
             lease.attach_process(None)

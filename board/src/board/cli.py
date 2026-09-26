@@ -354,3 +354,18 @@ def findings_extract(project_id: str, apply_changes: bool, db_path: str | None):
             return
         inserted, lost = apply_extraction(conn, project_id, result, utcnow=utcnow())
         click.echo(f"inserted findings={inserted} lost_evidence_rows={lost} skipped_facts={len(result.skipped_facts)}")
+
+
+@main.command()
+@click.argument("project_id")
+@click.option("--root", "reports_root", type=click.Path(path_type=Path), default=None,
+              help="Projects root (defaults to BOARD_PROJECTS_DIR).")
+def efficiency(project_id: str, reports_root: Path | None):
+    """Show task outcomes, token use, and elapsed time for a measured run."""
+    import json
+    from board.reporting.paths import default_projects_root, sanitize_project_id
+    from board.reporting.efficiency import summarize
+    path = (reports_root or default_projects_root()) / sanitize_project_id(project_id) / "reports" / "efficiency.jsonl"
+    if not path.exists():
+        raise click.ClickException(f"No efficiency measurements yet: {path}")
+    click.echo(json.dumps(summarize(path), indent=2))

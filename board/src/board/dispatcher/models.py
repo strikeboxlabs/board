@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import time
 
 from board.dispatcher.runtime.cancellation import TaskCancellation
 
@@ -15,6 +16,7 @@ class RunningTask:
     fact_count: int | None = None
     hint_count: int | None = None
     open_intent_count: int | None = None
+    started_at: float = field(default_factory=time.time)
 
 
 @dataclass(slots=True)

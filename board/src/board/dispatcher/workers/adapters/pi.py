@@ -127,36 +127,61 @@ class PiDriver(WorkerDriver):
                 return session_id
         return None
 
-    def extract_response_text(self, stdout: str, stderr: str) -> str:
-        assistant_message: dict[str, Any] | None = None
-        for event in self._iter_events(stdout):
-            event_type = event.get("type")
-            if event_type == "turn_end":
+    @classmethod
+    def response_messages(cls, stdout: str) -> list[dict[str, Any]]:
+        # agent_end repeats earlier messages; prefer the complete list to avoid
+        # counting streamed/turn_end copies of the same usage more than once.
+        turns: list[dict[str, Any]] = []
+        final: list[dict[str, Any]] | None = None
+        for event in cls._iter_events(stdout):
+            if event.get("type") == "turn_end":
                 message = event.get("message")
                 if isinstance(message, dict) and message.get("role") == "assistant":
-                    assistant_message = message
-            elif event_type == "agent_end":
-                messages = event.get("messages")
-                if isinstance(messages, list):
-                    for message in reversed(messages):
-                        if isinstance(message, dict) and message.get("role") == "assistant":
-                            assistant_message = message
-                            break
-        if assistant_message is None:
-            return stdout
-        content = assistant_message.get("content")
-        if not isinstance(content, list):
-            return stdout
-        parts: list[str] = []
-        for item in content:
-            if not isinstance(item, dict):
-                continue
-            if item.get("type") != "text":
-                continue
-            text = item.get("text")
-            if isinstance(text, str) and text:
-                parts.append(text)
-        return "\n".join(parts).strip() or stdout
+                    turns.append(message)
+            elif event.get("type") == "agent_end" and isinstance(event.get("messages"), list):
+                final = [m for m in event["messages"]
+                         if isinstance(m, dict) and m.get("role") == "assistant"]
+        return final if final else turns
+
+    @classmethod
+    def output_diagnostics(cls, stdout: str) -> dict[str, Any]:
+        messages = cls.response_messages(stdout)
+        usage = {key: 0 for key in ("input", "output", "cacheRead", "cacheWrite", "reasoning", "totalTokens")}
+        for message in messages:
+            for key in usage:
+                value = message.get("usage", {}).get(key, 0)
+                if isinstance(value, (int, float)):
+                    usage[key] += value
+        return {"usage": usage, "usage_available": bool(messages and any(m.get("usage") for m in messages)),
+                "stop_reason": messages[-1].get("stopReason") if messages else None,
+                "model": messages[-1].get("model") if messages else None,
+                "model_calls": len(messages)}
+
+    def extract_response_text(self, stdout: str, stderr: str) -> str:
+        messages = self.response_messages(stdout)
+        if not messages:
+            raise ValueError("pi_missing_assistant_response")
+        message = messages[-1]
+        stop = message.get("stopReason")
+        if stop == "length":
+            raise ValueError("pi_output_limit: final answer exhausted the output budget")
+        if stop in ("error", "aborted"):
+            raise ValueError(f"pi_response_{stop}")
+        content = message.get("content", [])
+        text = "\n".join(item.get("text", "") for item in content
+                         if isinstance(item, dict) and item.get("type") == "text").strip() if isinstance(content, list) else ""
+        if not text:
+            raise ValueError("pi_empty_final_answer")
+        return text
+
+    def build_reason(self, worker: WorkerConfig, prompt_path: str, extension_path: str) -> DriverResult:
+        command = self.build_execute(worker, "@" + prompt_path, None)
+        argv = command.argv
+        # Explicit extensions still load with --no-extensions. Limit the planner
+        # to the supplied graph; exploration belongs in explore tasks.
+        index = argv.index("--tools")
+        argv[index:index + 2] = ["--no-tools", "--extension", extension_path]
+        return command
 
     def _wrap_with_models(self, worker: WorkerConfig, pi_argv: list[str], *, enable_tools: bool = True) -> list[str]:
         script = (

@@ -132,6 +132,13 @@ MOCK_ALLOWED_ENV_KEYS = frozenset(
 class ReasonTaskConfig(BaseModel):
     timeout: int = Field(gt=0)
     max_intents: int = Field(gt=0, default=3)
+    target_open_intents: int = Field(gt=0, default=3)
+    max_attempts_per_graph: int = Field(gt=0, default=3)
+    retry_backoff_seconds: int = Field(gt=0, default=30)
+    cooldown_seconds: int = Field(ge=0, default=15)
+    pi_max_output_tokens: int = Field(ge=1024, default=16384)
+    pi_reasoning_effort: Literal["low", "medium", "high"] = "low"
+
 
 
 class ExploreTaskConfig(BaseModel):

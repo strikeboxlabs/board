@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import json
+import uuid
 import time
 
 from board.dispatcher.config import DispatchConfig, WorkerConfig
@@ -104,10 +106,12 @@ def run_reason_task(
             len(project.hints),
             len(open_intents),
         )
+        capacity = max(0, config.tasks.reason.target_open_intents - len(open_intents))
+        max_intents = min(config.tasks.reason.max_intents, capacity)
         prompt = render_prompt(
             load_prompt(config.runtime.prompt_group, "reason.md"),
             {
-                "graph_yaml": write_graph_snapshot_reference(
+                "graph_yaml": export_yaml.strip() if worker.type == "pi" else write_graph_snapshot_reference(
                     container_manager,
                     container_name,
                     project.project.id,
@@ -116,12 +120,37 @@ def run_reason_task(
                 ),
                 "fact_ids": format_fact_ids(allowed_fact_ids),
                 "open_intents": format_open_intents(open_intents),
-                "max_intents": str(config.tasks.reason.max_intents),
+                "max_intents": str(max_intents),
             },
         )
 
         session = driver.prepare_session()
-        command = driver.build_execute(worker, prompt, session)
+        if worker.type == "pi":
+            # Pass the complete graph as a file attachment: one bounded model
+            # request, no graph-reading tool turns or command-line size limit.
+            nonce = uuid.uuid4().hex[:12]
+            prompt_path = f"{container_manager.scratch_dir(project.project.id)}/planner-{nonce}.md"
+            extension_path = f"{container_manager.scratch_dir(project.project.id)}/planner-{nonce}.mjs"
+            container_manager.write_text_file(container_name, prompt_path, prompt)
+            # Pi's custom model lacks reasoning metadata, so --thinking alone
+            # cannot set the OpenAI-compatible endpoint's reasoning effort.
+            extension = """export default function (pi) {
+  pi.on('before_provider_request', (event, ctx) => {
+    const p = { ...event.payload };
+    if (ctx.model?.api === 'openai-completions') {
+      const key = 'max_completion_tokens' in p ? 'max_completion_tokens' : 'max_tokens';
+      p[key] = MAX_OUTPUT;
+      p.reasoning_effort = EFFORT;
+    }
+    return p;
+  });
+}
+""".replace("MAX_OUTPUT", str(config.tasks.reason.pi_max_output_tokens)).replace(
+                "EFFORT", json.dumps(config.tasks.reason.pi_reasoning_effort))
+            container_manager.write_text_file(container_name, extension_path, extension)
+            command = driver.build_reason(worker, prompt_path, extension_path)
+        else:
+            command = driver.build_execute(worker, prompt, session)
         execute_started = time.perf_counter()
         result = run_worker_process(
             container_manager,
@@ -183,7 +212,7 @@ def run_reason_task(
             model_output = driver.extract_response_text(result.stdout, result.stderr)
             payload = parse_json_output(model_output)
             kind, data = validate_reason_payload(
-                payload, open_intents_empty=not open_intents, max_intents=config.tasks.reason.max_intents,
+                payload, open_intents_empty=not open_intents, max_intents=max_intents,
             )
         except Exception as exc:
             LOG.warning(
@@ -197,6 +226,11 @@ def run_reason_task(
                 preview(result.stderr),
             )
             return "failed"
+        if kind == "wait":
+            LOG.info("reason deferred project=%s explanation=%s", project.project.id, data["reason"])
+            from board.dispatcher.metrics import record_metric
+            record_metric(container_manager, project.project.id, {"event": "planner_wait", "explanation": data["reason"]})
+            return "success"
         if kind == "rejected":
             LOG.warning(
                 "reason rejected project=%s worker=%s execute_ms=%s total_ms=%s stdout_preview=%s",
@@ -233,7 +267,21 @@ def run_reason_task(
             return "success"
         if kind == "intents":
             created = 0
+            # A human can add intents while planning runs. Recheck capacity and
+            # exact duplicates immediately before writing the proposed batch.
+            current = client.get_project(project.project.id)
+            current_open = [intent for intent in current.intents if intent.to is None]
+            available = max(0, config.tasks.reason.target_open_intents - len(current_open))
+            existing = {(tuple(sorted(intent.from_)), intent.description.strip().casefold()) for intent in current_open}
+            if available == 0:
+                return "success"
             for intent_data in data:
+                if created >= available:
+                    break
+                key = (tuple(sorted(intent_data["from"])), intent_data["description"].strip().casefold())
+                if key in existing:
+                    continue
+                existing.add(key)
                 response = client.create_intent(
                     project.project.id,
                     intent_data["from"],

@@ -187,8 +187,11 @@ def validate_reason_payload(
         if not intents:
             return "noop", None
         return "intents", intents
+    wait = data.get("wait")
+    if isinstance(wait, str) and wait.strip():
+        return "wait", {"reason": wait.strip()}
     if open_intents_empty:
-        raise ValueError("intents is required when open_intents is empty")
+        raise ValueError("intents or an explicit wait reason is required when open_intents is empty")
     return "noop", None
 
 

@@ -40,7 +40,7 @@ def test_reason_payload_limits_number_of_intents() -> None:
 
 
 def test_reason_payload_requires_intent_when_none_are_open() -> None:
-    with pytest.raises(ValueError, match="intents is required"):
+    with pytest.raises(ValueError, match="intents or an explicit wait reason is required"):
         validate_reason_payload(
             {"accepted": True, "data": {}},
             open_intents_empty=True,

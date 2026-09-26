@@ -242,7 +242,7 @@ class ContainerManager:
         return f"{CONTAINER_PROJECT_DIR}/scratch"
 
     def worker_env(self, project_id: str, intent_id: str | None = None) -> dict[str, str]:
-        env = {"BOARD_PROJECT_DIR": CONTAINER_PROJECT_DIR}
+        env = {"BOARD_PROJECT_DIR": CONTAINER_PROJECT_DIR, "BOARD_PROJECT_ID": project_id}
         evidence = [CONTAINER_PROJECT_DIR, "evidence"]
         if intent_id:
             evidence.append(reporting_paths.sanitize_project_id(intent_id))

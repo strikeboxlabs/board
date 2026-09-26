@@ -19,6 +19,8 @@ from board.dispatcher.runtime.containers import ContainerManager
 from board.dispatcher.runtime.local_backend import LocalBackend
 from board.dispatcher.runtime.startup_healthcheck import format_failure_summary, run_startup_healthchecks
 from board.dispatcher.scheduler.worker_select import choose_worker
+from board.dispatcher.scheduler.reason_gate import ReasonGate, graph_signature
+from board.dispatcher.metrics import record_metric
 from board.dispatcher.workers.registry import get_driver
 from board.dispatcher.tasks.bootstrap import run_bootstrap_task
 from board.dispatcher.tasks.common import persist_project_reports
@@ -56,6 +58,7 @@ class DispatcherLoop:
         else:
             assert self.config.container is not None
             self.container_manager = ContainerManager(self.config.container)
+        self.reason_gate = ReasonGate(self.container_manager, self.config.tasks.reason)
         self.executor = ThreadPoolExecutor(max_workers=self.config.runtime.max_workers)
         self.cleanup_executor = ThreadPoolExecutor(max_workers=max(1, min(8, self.config.runtime.max_workers)))
         self.futures: dict[Future[str], RunningTask] = {}
@@ -306,7 +309,8 @@ class DispatcherLoop:
             reason_trigger = self._reason_trigger(project)
             if reason_trigger is not None:
                 export_yaml = self.client.export_project(summary.id)
-                return self._dispatch_reason(project, export_yaml, reason_trigger)
+                if self._dispatch_reason(project, export_yaml, reason_trigger):
+                    return True
         running_intent_ids = self._project_running_explore_intents(summary.id)
         unclaimed_intents = [
             intent
@@ -407,6 +411,10 @@ class DispatcherLoop:
         return self._dispatch_bootstrap(project, intent)
 
     def _dispatch_reason(self, project: ProjectDetail, export_yaml: str, trigger: str) -> bool:
+        gate = getattr(self, "reason_gate", None)
+        signature = graph_signature(project, self.config.tasks.reason)
+        if gate is not None and not gate.allows(project.project.id, signature):
+            return False
         selection = self._select_worker(project.project.id, "reason")
         worker = selection.worker
         if worker is None:
@@ -441,6 +449,8 @@ class DispatcherLoop:
             )
             return False
         try:
+            if gate is not None:
+                gate.started(project.project.id, signature)
             future = self.executor.submit(
                 run_reason_task,
                 self.config,
@@ -943,6 +953,7 @@ class DispatcherLoop:
             task = self.futures.pop(future)
             try:
                 outcome = future.result()
+                self._record_task_outcome(task, outcome)
                 if outcome == "cancelled":
                     LOG.info(
                         "task cancelled project=%s task=%s worker=%s",
@@ -1000,6 +1011,33 @@ class DispatcherLoop:
                     )
             except Exception:
                 LOG.exception("task crashed project=%s task=%s worker=%s", task.project_id, task.task_type, task.worker_name)
+                self._record_task_outcome(task, "crashed")
+
+    def _record_task_outcome(self, task: RunningTask, outcome: str) -> None:
+        gate = getattr(self, "reason_gate", None)
+        if task.task_type == "reason" and gate is not None:
+            try:
+                gate.finished(task.project_id, outcome, {
+                    "fact_count": task.fact_count, "hint_count": task.hint_count,
+                    "open_intent_count": task.open_intent_count,
+                })
+            except Exception:
+                # Keep a fail-closed in-memory gate if durable state cannot be saved.
+                gate.states[task.project_id] = {"unreadable": True}
+                LOG.exception("could not persist planner outcome project=%s", task.project_id)
+        if gate is None:
+            return
+        event = {"event": "task", "task_type": task.task_type, "intent_id": task.intent_id,
+                 "worker": task.worker_name, "outcome": outcome,
+                 "elapsed_seconds": round(time.time() - task.started_at, 3)}
+        try:
+            current = self.client.get_project(task.project_id)
+            event.update(project_status=current.project.status, facts=len(current.facts),
+                         closed_intents=sum(i.to is not None for i in current.intents),
+                         open_intents=self._project_open_intent_count(current))
+        except Exception:
+            LOG.warning("could not read graph for task metrics project=%s", task.project_id)
+        record_metric(self.container_manager, task.project_id, event)
 
     def _cleanup_completed_containers(self, summaries: list[ProjectSummary]) -> None:
         for summary in summaries:
@@ -1099,6 +1137,17 @@ class DispatcherLoop:
             if summary.id in self.reason_checkpoints:
                 continue
             open_intent_count = summary.working_intent_count + summary.unclaimed_intent_count
+            gate = getattr(self, "reason_gate", None)
+            if gate is not None:
+                state = gate.state(summary.id)
+                saved = state.get("checkpoint")
+                if state.get("succeeded") and saved:
+                    self.reason_checkpoints[summary.id] = ReasonCheckpoint(**saved)
+                    continue
+                # Fresh deployments should fill existing vacancies. Failed plans
+                # must retain their opportunity to retry, subject to the gate.
+                if state or open_intent_count < self.config.tasks.reason.target_open_intents:
+                    continue
             if open_intent_count == 0:
                 continue
             self.reason_checkpoints[summary.id] = ReasonCheckpoint(
