@@ -51,6 +51,12 @@ def render_timeline(conn: sqlite3.Connection, project_id: str) -> str:
             meta += f"\n  blocked_by: {i['blocked_by']} (waiting on job)"
         if "assigned_worker" in i.keys() and i["assigned_worker"]:
             meta += f"\n  assigned_to: {i['assigned_worker']}"
+        if "assigned_worker_type" in i.keys() and i["assigned_worker_type"]:
+            meta += f"\n  worker_type: {i['assigned_worker_type']}"
+        if "dispatch_error" in i.keys() and i["dispatch_error"]:
+            meta += f"\n  error: {i['dispatch_error']}"
+        if "cancel_requested_at" in i.keys() and i["cancel_requested_at"]:
+            meta += f"\n  cancellation: {'cancelled' if i['cancelled_at'] else 'stopping'}"
         if i["worker"] and not i["concluded_at"]:
             meta += f"\n  worker: {i['worker']} (in progress)"
         block = f"[{ts}] INTENT DECLARED {i['id']} by {i['creator']}\n{meta}\n  {i['description']}"

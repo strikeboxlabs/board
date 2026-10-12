@@ -72,7 +72,7 @@ function tacticalConsole() {
       return {
         facts: (this.project?.facts || []).filter(f => !['origin', 'goal'].includes(f.id)).length,
         running: intents.filter(i => !i.excluded && !i.to && i.worker).length,
-        queued: intents.filter(i => !i.excluded && !i.to && !i.worker).length,
+        queued: intents.filter(i => !i.excluded && !i.to && !i.worker && !i.dispatch_error && !i.cancel_requested_at).length,
         concluded: intents.filter(i => i.to).length,
       };
     },

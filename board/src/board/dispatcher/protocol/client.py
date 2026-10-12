@@ -147,6 +147,14 @@ class BoardClient:
             json={"worker": worker},
         )
 
+    def fail_intent(self, project_id: str, intent_id: str, worker: str | None, error: str) -> ApiResult:
+        return self._request_json("POST", f"/projects/{project_id}/intents/{intent_id}/fail",
+                                  json={"worker": worker, "error": error[:2000]})
+
+    def acknowledge_intent_cancel(self, project_id: str, intent_id: str, worker: str) -> ApiResult:
+        return self._request_json("POST", f"/projects/{project_id}/intents/{intent_id}/cancelled",
+                                  json={"worker": worker})
+
     def conclude(self, project_id: str, intent_id: str, worker: str, description: str) -> ApiResult:
         return self._request_json(
             "POST",
@@ -169,12 +177,15 @@ class BoardClient:
         creator: str,
         priority: int | None = None,
         blocked_by: str | None = None,
+        assigned_worker_type: str | None = None,
     ) -> ApiResult:
         payload: dict[str, Any] = {"from": from_ids, "description": description, "creator": creator, "worker": None}
         if priority is not None:
             payload["priority"] = priority
         if blocked_by:
             payload["blocked_by"] = blocked_by
+        if assigned_worker_type is not None:
+            payload["assigned_worker_type"] = assigned_worker_type
         return self._request_json(
             "POST",
             f"/projects/{project_id}/intents",

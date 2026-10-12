@@ -55,6 +55,13 @@ CREATE TABLE IF NOT EXISTS intents (
     priority INTEGER NOT NULL DEFAULT 50,
     blocked_by TEXT,
     assigned_worker TEXT,
+    assigned_worker_type TEXT,
+    dispatch_error TEXT,
+    dispatch_error_at TEXT,
+    dispatch_error_worker TEXT,
+    cancel_requested_at TEXT,
+    cancelled_at TEXT,
+    cancelled_by TEXT,
     priority_set_by TEXT,
     priority_set_at TEXT,
     PRIMARY KEY (id, project_id)
@@ -253,10 +260,15 @@ def _ensure_intent_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE intents ADD COLUMN blocked_by TEXT")
     if "assigned_worker" not in columns:
         conn.execute("ALTER TABLE intents ADD COLUMN assigned_worker TEXT")
+    if "assigned_worker_type" not in columns:
+        conn.execute("ALTER TABLE intents ADD COLUMN assigned_worker_type TEXT")
     if "priority_set_by" not in columns:
         conn.execute("ALTER TABLE intents ADD COLUMN priority_set_by TEXT")
     if "priority_set_at" not in columns:
         conn.execute("ALTER TABLE intents ADD COLUMN priority_set_at TEXT")
+    for column in ("dispatch_error", "dispatch_error_at", "dispatch_error_worker", "cancel_requested_at", "cancelled_at", "cancelled_by"):
+        if column not in columns:
+            conn.execute(f"ALTER TABLE intents ADD COLUMN {column} TEXT")
 
 
 @contextmanager

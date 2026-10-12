@@ -10,7 +10,8 @@ Facts are confirmed results; intents are work; hints are user guidance. Check wh
 - To wait, including when no intents are open: {"accepted":true,"data":{"wait":"specific dependency, missing information, or why no worthwhile next step exists"}}
 - Never claim completion merely because work is blocked or no promising direction remains.
 - Keep each intent description to at most three sentences. Cite existing fact IDs. Do not repeat closed investigations without new evidence.
-- Respect open intents, including assigned_worker pins. Never set assigned_worker.
+- Respect open intents, including assigned_worker pins and assigned_worker_type constraints. Never set either routing field; these are human choices.
+- Failed and cancelled intents require human action. Never retry, replace, or reroute that work automatically. Report the error or cancellation as a reason to wait.
 - priority is 1–100. blocked_by may identify a running job whose result is required. Count blocked intents as already planned work.
 - The platform monitors background jobs. Do not create work to poll or supervise them.
 - Prefer waiting for another worker's result over a speculative dependent intent. Remain within the project's goal and user constraints.

@@ -11,6 +11,7 @@ from board.dispatcher.runtime.cancellation import TaskCancellation
 from board.dispatcher.runtime.containers import ContainerManager
 from board.dispatcher.runtime.heartbeat import HeartbeatLease
 from board.dispatcher.tasks.common import (
+    TaskFailure,
     best_effort_release,
     cancel_reason,
     did_timeout,
@@ -238,11 +239,11 @@ def run_explore_task(
             preview(first.stderr),
         )
         best_effort_release(client, project.project.id, intent.id, worker.name)
-        return "failed"
-    except Exception:
+        return TaskFailure("failed", f"Worker {worker.name} exited with code {first.returncode} during execution. Automatic retries are stopped.")
+    except Exception as exc:
         LOG.exception("explore task crashed project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
         best_effort_release(client, project.project.id, intent.id, worker.name)
-        return "failed"
+        return TaskFailure("failed", f"Worker {worker.name} could not execute the intent ({type(exc).__name__}). Automatic retries are stopped.")
     finally:
         lease.stop()
 

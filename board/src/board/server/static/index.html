@@ -880,6 +880,22 @@
             </div>
             <div class="p-4 space-y-4">
               <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words" x-text="selectedIntentRecord().description"></p>
+              <template x-if="selectedIntentRecord().dispatch_error">
+                <div class="rounded-lg border border-rose-300/30 bg-rose-50/50 p-3 text-xs" role="alert">
+                  <p class="font-semibold text-rose-600 mb-1">Worker error — execution stopped</p>
+                  <p class="whitespace-pre-wrap break-words text-slate-600" x-text="selectedIntentRecord().dispatch_error"></p>
+                  <p class="text-slate-400 mt-2" x-text="formatTime(selectedIntentRecord().dispatch_error_at)"></p>
+                </div>
+              </template>
+              <template x-if="selectedIntentRecord().cancel_requested_at">
+                <p class="text-xs text-slate-400" role="status" x-text="selectedIntentRecord().cancelled_at ? 'Cancelled. This intent will not run again.' : 'Stopping the worker. Waiting for the dispatcher to confirm it has ended.'"></p>
+              </template>
+              <template x-if="!selectedIntentRecord().to && !replay.active">
+                <div class="flex gap-2">
+                  <button x-show="!selectedIntentRecord().cancel_requested_at && !selectedIntentRecord().dispatch_error" @click="openIntentControl('cancel')" class="px-3 py-1.5 text-xs border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50">Cancel intent</button>
+                  <button @click="openIntentControl('delete')" class="px-3 py-1.5 text-xs border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50">Delete intent</button>
+                </div>
+              </template>
               <div class="pt-4 border-t border-slate-100 space-y-3 text-xs">
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">From</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedIntentRecord().from.join(', ')"></span></div>
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">To</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedIntentRecord().to || '—'"></span></div>
@@ -889,6 +905,9 @@
                 </template>
                 <template x-if="selectedIntentRecord().assigned_worker">
                   <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Assigned to</span><span class="font-mono text-slate-600 text-right break-all" x-text="'📌 ' + selectedIntentRecord().assigned_worker"></span></div>
+                </template>
+                <template x-if="selectedIntentRecord().assigned_worker_type">
+                  <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Worker type</span><span class="text-slate-600 text-right" x-text="workerTypeLabel(selectedIntentRecord().assigned_worker_type)"></span></div>
                 </template>
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Creator</span><span class="text-slate-600 text-right break-all" x-text="selectedIntentRecord().creator"></span></div>
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Worker</span><span class="text-slate-600 text-right break-all" x-text="selectedIntentRecord().worker || '—'"></span></div>
@@ -910,14 +929,24 @@
                           <span class="text-slate-300 text-[10px]">1–100, higher = sooner</span>
                         </div>
                         <div class="flex items-center gap-2">
+                          <label for="intent-edit-worker-type" class="text-slate-400 text-[11px] w-14 shrink-0">Type</label>
+                          <select id="intent-edit-worker-type" x-model="intentEdit.assigned_worker_type" class="flex-1 min-w-0 px-2 py-1 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-brand-100">
+                            <option value="">Automatic</option>
+                            <option value="pi">Pi</option>
+                            <option value="codex">Codex</option>
+                            <option value="claudecode">Claude Code</option>
+                            <option value="mock" x-show="intentEdit.assigned_worker_type === 'mock'">Mock</option>
+                          </select>
+                        </div>
+                        <div class="flex items-center gap-2">
                           <span class="text-slate-400 text-[11px] w-14 shrink-0">Worker</span>
                           <input type="text" x-model="intentEdit.assigned_worker" placeholder="auto — e.g. local-pi, local-codex" class="flex-1 px-2 py-1 border border-slate-200 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-100">
                         </div>
                         <div class="flex items-center gap-2">
                           <button @click="saveIntentEdit()" class="px-2.5 py-1 rounded-lg bg-brand-500 text-white text-[11px] font-medium hover:bg-brand-600">Save</button>
                           <button @click="cancelIntentEdit()" class="px-2.5 py-1 rounded-lg border border-slate-200 text-slate-500 text-[11px] hover:bg-slate-50">Cancel</button>
-                          <span class="text-slate-300 text-[10px]">empty worker = auto dispatch</span>
                         </div>
+                        <p class="text-slate-400 text-[10px]">A worker name also pins the intent to that worker. Routing changes apply on the next dispatch.</p>
                       </div>
                     </template>
                   </div>
@@ -1089,6 +1118,21 @@
 </div>
 
 <!-- Create Intent -->
+<div x-show="showIntentControl" x-cloak role="dialog" aria-modal="true" aria-labelledby="intent-control-title" class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="closeIntentControl()">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
+    <h3 id="intent-control-title" class="text-base font-semibold text-slate-700 mb-2" x-text="intentControl.action === 'delete' ? 'Delete intent' : 'Cancel intent'"></h3>
+    <p class="text-xs font-mono text-slate-400 mb-3" x-text="intentControl.id"></p>
+    <p class="text-sm text-slate-600" x-text="intentControl.action === 'delete' ? 'Stop any running attempt, then remove this unfinished intent from the project. Existing facts and evidence files are kept.' : 'Stop this attempt and prevent it from being dispatched again. The intent stays in the project.'"></p>
+    <p x-show="intentControl.busy" class="text-xs text-amber-600 mt-3" role="status">Waiting for the worker to stop. Keep the dispatcher running. Closing this dialog keeps the intent in the project.</p>
+    <p x-show="intentControl.error" class="text-xs text-rose-600 mt-3" role="alert" x-text="intentControl.error"></p>
+    <div class="flex justify-end gap-2 mt-5">
+      <button @click="closeIntentControl()" class="px-4 py-2 text-sm border border-slate-200 text-slate-600 rounded-xl" x-text="intentControl.busy ? 'Keep intent' : 'Keep working'"></button>
+      <button @click="confirmIntentControl()" :disabled="intentControl.busy" class="px-4 py-2 text-sm bg-rose-500 text-white rounded-xl disabled:opacity-30" x-text="intentControl.action === 'delete' ? 'Cancel and delete' : 'Cancel intent'"></button>
+    </div>
+  </div>
+</div>
+
+<!-- Create Intent -->
 <div x-show="showIntentModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showIntentModal = false">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
     <h3 class="text-base font-semibold text-slate-700 mb-1">New Intent</h3>
@@ -1102,6 +1146,16 @@
     </div>
     <div class="space-y-3">
       <textarea x-model="intentForm.description" placeholder="What will you explore?" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      <div>
+        <label for="intent-worker-type" class="text-[11px] text-slate-400 mb-1 block font-medium">Send to worker type</label>
+        <select id="intent-worker-type" x-model="intentForm.assigned_worker_type" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+          <option value="">Automatic</option>
+          <option value="pi">Pi</option>
+          <option value="codex">Codex</option>
+          <option value="claudecode">Claude Code</option>
+        </select>
+        <p class="text-[11px] text-slate-400 mt-1" x-text="intentForm.assigned_worker_type ? 'The intent waits until a matching worker is available.' : 'Board chooses an available worker. You can also claim the intent for manual work.'"></p>
+      </div>
       <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
         Actor: <span class="font-medium text-slate-700" x-text="actorName()"></span>
       </div>
@@ -1109,8 +1163,9 @@
     <div class="flex justify-end gap-2 mt-5">
       <button @click="showIntentModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">Cancel</button>
       <button @click="createIntent(false)" :disabled="!intentForm.description"
-        class="px-5 py-2 text-sm border border-slate-200 text-slate-600 rounded-xl font-medium hover:bg-slate-50 transition disabled:opacity-30">Declare</button>
-      <button @click="createIntent(true)" :disabled="!intentForm.description"
+        :class="intentForm.assigned_worker_type ? 'bg-brand-500 text-white hover:bg-brand-600' : 'border border-slate-200 text-slate-600 hover:bg-slate-50'"
+        class="px-5 py-2 text-sm rounded-xl font-medium transition disabled:opacity-30" x-text="intentForm.assigned_worker_type ? 'Send to worker' : 'Declare'"></button>
+      <button x-show="!intentForm.assigned_worker_type" @click="createIntent(true)" :disabled="!intentForm.description"
         class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200">Declare &amp; Claim</button>
     </div>
   </div>
@@ -1412,6 +1467,9 @@ function boardApp() {
 
     showNewProject: false,
     showIntentModal: false,
+    showIntentControl: false,
+    intentControl: { action: 'cancel', id: '', projectId: '', busy: false, error: '' },
+    intentControlRequestId: 0,
     showConcludeModal: false,
     showCompleteModal: false,
     showHintModal: false,
@@ -1429,8 +1487,8 @@ function boardApp() {
     isAbortingProject: false,
 
     newProject: { title: '', origin: '', goal: '', bootstrap: true, hints: [{ content: '' }] },
-    intentForm: { description: '' },
-    intentEdit: { open: false, priority: 50, assigned_worker: '' },
+    intentForm: { description: '', assigned_worker_type: '' },
+    intentEdit: { open: false, priority: 50, assigned_worker: '', assigned_worker_type: '' },
     concludeForm: { description: '', intentId: '' },
     completeForm: { description: '' },
     hintForm: { content: '' },
@@ -1627,17 +1685,22 @@ function boardApp() {
     },
 
     openIntentNodeType(intent) {
+      if (intent.cancel_requested_at) return intent.cancelled_at ? 'cancelled' : 'stopping';
+      if (intent.dispatch_error) return 'failed';
       if (intent.excluded) return 'excluded';
       if (this.isBootstrapIntent(intent)) return intent.worker ? 'bootstrap_running' : 'bootstrap_pending';
       return intent.worker ? 'in_progress' : 'unclaimed';
     },
 
     openIntentNodeLabel(intent) {
+      if (intent.cancel_requested_at) return intent.cancelled_at ? 'Cancelled' : 'Stopping';
+      if (intent.dispatch_error) return 'Error';
       if (intent.excluded) return 'Excluded';
       return this.isBootstrapIntent(intent) ? 'Bootstrap' : '?';
     },
 
     openIntentNodeSize(intent) {
+      if (intent.dispatch_error || intent.cancel_requested_at) return { width: 78, height: 28 };
       if (intent.excluded) return { width: 70, height: 26 };
       if (this.isBootstrapIntent(intent)) return { width: 82, height: 30 };
       return { width: 22, height: 22 };
@@ -2631,6 +2694,9 @@ function boardApp() {
         { selector: 'node[nodeType="in_progress"]', style: { ...common, shape:'ellipse','background-color':'#ae7b29','background-opacity':0.8,label:'?',color:'#fff','font-size':'11px','font-weight':'bold',width:22,height:22,'border-width':2,'border-color':'#ffc766' }},
         { selector: 'node[nodeType="unclaimed"]', style: { ...common, shape:'hexagon','background-color':'#1c2b29','background-opacity':0.5,label:'?',color:'#9ab5a7','font-size':'11px','font-weight':'bold',width:20,height:20,'border-width':1.5,'border-color':'#9ab5a7','border-style':'dashed' }},
         { selector: 'node[nodeType="excluded"]', style: { ...common, shape:'round-rectangle', label:'data(label)', width:'data(width)', height:'data(height)', 'background-color':'#222a2a', color:'#819494', 'font-size':'10px', 'border-width':1, 'border-color':'#586867', 'border-style':'dashed' }},
+        { selector: 'node[nodeType="failed"]', style: { ...common, shape:'round-rectangle', label:'data(label)', width:'data(width)', height:'data(height)', 'background-color':'#422329', color:'#ffb5bc', 'font-size':'10px', 'border-width':1.5, 'border-color':'#d7727d' }},
+        { selector: 'node[nodeType="cancelled"], node[nodeType="stopping"]', style: { ...common, shape:'round-rectangle', label:'data(label)', width:'data(width)', height:'data(height)', 'background-color':'#222a2a', color:'#a4b2b2', 'font-size':'10px', 'border-width':1, 'border-color':'#819494', 'border-style':'dashed' }},
+        { selector: 'edge[status="failed"], edge[status="cancelled"], edge[status="stopping"]', style: { width:1, 'line-color':'#9b666c', 'line-style':'dotted', 'target-arrow-color':'#9b666c', 'target-arrow-shape':'triangle', 'curve-style':'bezier' }},
         { selector: 'edge[status="excluded"]', style: { width:1, 'line-color':'#586867', 'line-style':'dotted', 'target-arrow-color':'#586867', 'target-arrow-shape':'triangle', 'curve-style':'bezier', opacity:0.6 }},
         { selector: 'node[nodeType="bootstrap_pending"]', style: { ...common, shape:'round-rectangle','background-color':'#1c2119','background-opacity':0.96,label:'data(label)',color:'#e8c482','font-size':'10px','font-weight':'bold',width:'data(width)',height:'data(height)','border-width':1.5,'border-color':'#b89453','border-style':'dashed','text-wrap':'wrap','text-max-width':'70px' }},
         { selector: 'node[nodeType="bootstrap_running"]', style: { ...common, shape:'round-rectangle','background-color':'#70552a','background-opacity':0.96,label:'data(label)',color:'#1c2119','font-size':'10px','font-weight':'bold',width:'data(width)',height:'data(height)','border-width':2,'border-color':'#ffc766','text-wrap':'wrap','text-max-width':'70px' }},
@@ -3070,7 +3136,7 @@ function boardApp() {
       const nt = node.data('nodeType');
       const keepLogFocus = this.sideTab === 'log';
 
-      if (['in_progress', 'unclaimed', 'bootstrap_pending', 'bootstrap_running', 'excluded'].includes(nt)) {
+      if (['in_progress', 'unclaimed', 'bootstrap_pending', 'bootstrap_running', 'excluded', 'failed', 'cancelled', 'stopping'].includes(nt)) {
         this.selectIntent(node.data('intentId'));
         if (keepLogFocus) this.scrollTimelineToSelection();
         else this.sideTab = 'detail';
@@ -3266,7 +3332,7 @@ function boardApp() {
 
     selectedOpenIntentRecord() {
       const intent = this.selectedIntentRecord();
-      if (!intent || intent.to || intent.excluded || !this.projectIsActive()) return null;
+      if (!intent || intent.to || intent.excluded || intent.dispatch_error || intent.cancel_requested_at || !this.projectIsActive()) return null;
       return intent;
     },
 
@@ -3295,16 +3361,22 @@ function boardApp() {
     },
 
     intentDotClass(i) {
+      if (i.dispatch_error) return 'bg-rose-500';
+      if (i.cancel_requested_at) return 'bg-slate-400';
       if (i.to) return 'bg-teal-400';
       if (this.isBootstrapIntent(i)) return i.worker ? 'bg-orange-400' : 'bg-orange-200';
       return i.worker ? 'bg-amber-400' : 'bg-slate-300';
     },
     intentStatusClass(i) {
+      if (i.dispatch_error) return 'text-rose-600';
+      if (i.cancel_requested_at) return 'text-slate-400';
       if (i.to) return 'text-teal-600';
       if (this.isBootstrapIntent(i)) return i.worker ? 'text-orange-600' : 'text-orange-400';
       return i.worker ? 'text-amber-600' : 'text-slate-400';
     },
     intentStatusLabel(i) {
+      if (i.cancel_requested_at) return i.cancelled_at ? 'Cancelled' : 'Stopping';
+      if (i.dispatch_error) return 'Error';
       if (i.excluded) return 'Excluded';
       if (i.to) return 'Concluded';
       if (this.isBootstrapIntent(i)) return i.worker ? 'Bootstrap Running' : 'Bootstrap Pending';
@@ -3355,7 +3427,7 @@ function boardApp() {
     openIntentEdit() {
       const i = this.selectedIntentRecord();
       if (!i) return;
-      this.intentEdit = { open: true, priority: i.priority != null ? i.priority : 50, assigned_worker: i.assigned_worker || '' };
+      this.intentEdit = { open: true, priority: i.priority != null ? i.priority : 50, assigned_worker: i.assigned_worker || '', assigned_worker_type: i.assigned_worker_type || '' };
     },
     cancelIntentEdit() {
       this.intentEdit.open = false;
@@ -3365,13 +3437,14 @@ function boardApp() {
       if (!i) return;
       const priority = Math.min(100, Math.max(1, Number(this.intentEdit.priority) || 50));
       const worker = (this.intentEdit.assigned_worker || '').trim();
+      const workerType = this.intentEdit.assigned_worker_type || null;
       try {
         await this.api('PUT', `/projects/${this.selectedProjectId}/intents/${i.id}/priority`, { priority, actor: this.actorName() });
-        await this.api('PUT', `/projects/${this.selectedProjectId}/intents/${i.id}/assign`, { assigned_worker: worker || null, actor: this.actorName() });
+        await this.api('PUT', `/projects/${this.selectedProjectId}/intents/${i.id}/assign`, { assigned_worker: worker || null, assigned_worker_type: workerType, actor: this.actorName() });
         this.intentEdit.open = false;
         await this.loadProject(this.selectedProjectId);
         this.updateGraph();
-        this.showToast(`Intent ${i.id} updated · prio ${priority}${worker ? ` · pinned to ${worker}` : ''}`);
+        this.showToast(`Intent ${i.id} updated · prio ${priority}${workerType ? ` · ${this.workerTypeLabel(workerType)}` : ''}${worker ? ` · pinned to ${worker}` : ''}`);
       } catch(e) { this.showToast(e.message, 'error'); }
     },
     intentPriorityClass(i) {
@@ -3779,11 +3852,70 @@ function boardApp() {
 
     openCreateIntent() {
       if (!this.canActOnSelectedFacts()) return;
-      this.intentForm = { description:'' };
+      this.intentForm = { description:'', assigned_worker_type: '' };
       this.showIntentModal = true;
     },
 
+    openIntentControl(action) {
+      const intent = this.selectedIntentRecord();
+      if (!intent || intent.to || this.replay.active) return;
+      this.intentControlRequestId++;
+      this.intentControl = { action, id: intent.id, projectId: this.selectedProjectId, busy: false, error: '' };
+      this.showIntentControl = true;
+    },
+
+    closeIntentControl() {
+      this.intentControlRequestId++;
+      this.showIntentControl = false;
+    },
+
+    async confirmIntentControl() {
+      if (this.intentControl.busy) return;
+      const { action, id, projectId } = this.intentControl;
+      const requestId = this.intentControlRequestId;
+      this.intentControl.busy = true;
+      this.intentControl.error = '';
+      try {
+        const record = this.project?.intents.find(i => i.id === id);
+        if (record?.worker === this.actorName()) {
+          throw new Error('This intent is manually claimed by you. Stop any external commands and use Release before cancelling or deleting it.');
+        }
+        let intent = await this.api('POST', `/projects/${projectId}/intents/${id}/cancel`, { actor: this.actorName() });
+        if (action === 'delete') {
+          for (let attempt = 0; !intent.cancelled_at && attempt < 60; attempt++) {
+            if (requestId !== this.intentControlRequestId) return;
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            const detail = await this.api('GET', `/projects/${projectId}`);
+            intent = detail.intents.find(i => i.id === id);
+            if (!intent) break;
+          }
+          if (requestId !== this.intentControlRequestId) return;
+          if (intent && !intent.cancelled_at) throw new Error('The worker has not confirmed it stopped. The intent is kept; check the dispatcher and try deletion again.');
+          if (intent) await this.api('DELETE', `/projects/${projectId}/intents/${id}`);
+          this.selectedNode = null;
+          this.showToast(`Intent ${id} deleted`);
+        } else {
+          this.showToast(intent.cancelled_at ? `Intent ${id} cancelled` : `Stopping intent ${id}`);
+        }
+        this.closeIntentControl();
+        await this.loadProject(projectId);
+        this.updateGraph();
+      } catch (error) {
+        if (requestId === this.intentControlRequestId) this.intentControl.error = error.message;
+      } finally {
+        if (requestId === this.intentControlRequestId) this.intentControl.busy = false;
+      }
+    },
+
+    workerTypeLabel(type) {
+      return ({ pi: 'Pi', codex: 'Codex', claudecode: 'Claude Code', mock: 'Mock' })[type] || type || 'Automatic';
+    },
+
     async createIntent(claim = false) {
+      if (claim && this.intentForm.assigned_worker_type) {
+        this.showToast('Use Send to worker for the selected worker type.', 'error');
+        return;
+      }
       try {
         const actor = this.actorName();
         await this.api('POST', `/projects/${this.selectedProjectId}/intents`, {
@@ -3791,11 +3923,12 @@ function boardApp() {
           description: this.intentForm.description,
           creator: actor,
           worker: claim ? actor : null,
+          assigned_worker_type: this.intentForm.assigned_worker_type || null,
         });
         this.showIntentModal = false;
         await this.loadProject(this.selectedProjectId);
         this.updateGraph();
-        this.showToast(claim ? 'Intent declared and claimed' : 'Intent declared');
+        this.showToast(claim ? 'Intent declared and claimed' : this.intentForm.assigned_worker_type ? `Intent sent to ${this.workerTypeLabel(this.intentForm.assigned_worker_type)}` : 'Intent declared');
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 

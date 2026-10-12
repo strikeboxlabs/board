@@ -1,9 +1,11 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 
 from board.server.db import get_conn
 from board.server.models import (
     ConcludeRequest,
     ConcludeResponse,
+    CancelIntentRequest,
+    FailIntentRequest,
     CreateIntentRequest,
     Fact,
     HeartbeatRequest,
@@ -16,6 +18,7 @@ from board.server.services import (
     get_claimable_open_intent_or_404,
     get_releasable_open_intent_or_404,
     get_intent_or_404,
+    get_project_or_404,
     intent_to_model,
     next_fact_id,
     next_intent_id,
@@ -44,7 +47,7 @@ def create_intent(project_id: str, body: CreateIntentRequest):
         iid = next_intent_id(conn, project_id)
         claimed = body.worker is not None
         conn.execute(
-            "INSERT INTO intents (id, project_id, to_fact_id, description, creator, worker, last_heartbeat_at, created_at, concluded_at, priority, blocked_by, assigned_worker) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
+            "INSERT INTO intents (id, project_id, to_fact_id, description, creator, worker, last_heartbeat_at, created_at, concluded_at, priority, blocked_by, assigned_worker, assigned_worker_type) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
             (
                 iid,
                 project_id,
@@ -56,6 +59,7 @@ def create_intent(project_id: str, body: CreateIntentRequest):
                 body.priority,
                 body.blocked_by,
                 body.assigned_worker,
+                body.assigned_worker_type,
             ),
         )
         for fid in body.from_:
@@ -77,6 +81,7 @@ def create_intent(project_id: str, body: CreateIntentRequest):
             priority=body.priority,
             blocked_by=body.blocked_by,
             assigned_worker=body.assigned_worker,
+            assigned_worker_type=body.assigned_worker_type,
         )
 
 
@@ -113,10 +118,10 @@ def update_intent_priority(project_id: str, intent_id: str, body: UpdateIntentPr
     response_model=Intent,
 )
 def update_intent_assignment(project_id: str, intent_id: str, body: UpdateIntentAssignmentRequest):
-    """Pin an open intent to a specific worker (or clear the pin with null).
+    """Route an intent to a worker name and/or type (clear with null).
 
-    A pinned intent is only dispatched to the named worker; while that worker
-    has no free slot the intent waits and other intents dispatch around it.
+    Both constraints apply when provided. Unavailable matching workers cause
+    the intent to wait while other runnable intents dispatch around it.
     """
     with get_conn() as conn:
         check_project_active(conn, project_id)
@@ -125,6 +130,11 @@ def update_intent_assignment(project_id: str, intent_id: str, body: UpdateIntent
             "UPDATE intents SET assigned_worker = ? WHERE id = ? AND project_id = ?",
             (body.assigned_worker, intent_id, project_id),
         )
+        if "assigned_worker_type" in body.model_fields_set:
+            conn.execute(
+                "UPDATE intents SET assigned_worker_type = ? WHERE id = ? AND project_id = ?",
+                (body.assigned_worker_type, intent_id, project_id),
+            )
         updated = conn.execute(
             "SELECT * FROM intents WHERE id = ? AND project_id = ?",
             (intent_id, project_id),
@@ -138,6 +148,7 @@ def update_intent_assignment(project_id: str, intent_id: str, body: UpdateIntent
 )
 def heartbeat(project_id: str, intent_id: str, body: HeartbeatRequest):
     with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         check_project_active(conn, project_id)
         get_claimable_open_intent_or_404(conn, project_id, intent_id, body.worker)
 
@@ -165,8 +176,10 @@ def release(project_id: str, intent_id: str, body: HeartbeatRequest):
 
         if row["worker"] == body.worker:
             conn.execute(
-                "UPDATE intents SET worker = NULL WHERE id = ? AND project_id = ?",
-                (intent_id, project_id),
+                """UPDATE intents SET worker = NULL,
+                   cancelled_at = CASE WHEN cancel_requested_at IS NOT NULL THEN COALESCE(cancelled_at, ?) ELSE cancelled_at END
+                   WHERE id = ? AND project_id = ?""",
+                (utcnow(), intent_id, project_id),
             )
             row = conn.execute(
                 "SELECT * FROM intents WHERE id = ? AND project_id = ?",
@@ -182,6 +195,7 @@ def release(project_id: str, intent_id: str, body: HeartbeatRequest):
 )
 def conclude(project_id: str, intent_id: str, body: ConcludeRequest):
     with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         check_project_active(conn, project_id)
         get_claimable_open_intent_or_404(conn, project_id, intent_id, body.worker)
 
@@ -206,3 +220,78 @@ def conclude(project_id: str, intent_id: str, body: ConcludeRequest):
             fact=Fact(id=fid, description=body.description),
             intent=intent_to_model(conn, updated, project_id),
         )
+
+
+@router.post("/projects/{project_id}/intents/{intent_id}/fail", response_model=Intent)
+def fail_intent(project_id: str, intent_id: str, body: FailIntentRequest):
+    """Record an ended attempt, release its claim, and prevent automatic retries."""
+    with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        get_project_or_404(conn, project_id)
+        row = get_intent_or_404(conn, project_id, intent_id)
+        if row["to_fact_id"] is not None:
+            raise HTTPException(409, "Concluded intents cannot fail")
+        if row["worker"] is not None and row["worker"] != body.worker:
+            raise HTTPException(409, "Intent belongs to another worker")
+        now = utcnow()
+        if row["cancel_requested_at"]:
+            conn.execute("UPDATE intents SET worker = NULL, cancelled_at = ? WHERE id = ? AND project_id = ?",
+                         (now, intent_id, project_id))
+        else:
+            conn.execute("""UPDATE intents SET worker = NULL, dispatch_error = ?, dispatch_error_at = ?,
+                            dispatch_error_worker = ? WHERE id = ? AND project_id = ?""",
+                         (body.error, now, body.worker, intent_id, project_id))
+        return intent_to_model(conn, get_intent_or_404(conn, project_id, intent_id), project_id)
+
+
+@router.post("/projects/{project_id}/intents/{intent_id}/cancel", response_model=Intent)
+def cancel_intent(project_id: str, intent_id: str, body: CancelIntentRequest):
+    with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        get_project_or_404(conn, project_id)
+        row = get_intent_or_404(conn, project_id, intent_id)
+        if row["to_fact_id"] is not None:
+            raise HTTPException(409, "Concluded intents are part of the project history")
+        if not row["cancel_requested_at"]:
+            now = utcnow()
+            conn.execute("""UPDATE intents SET cancel_requested_at = ?, cancelled_by = ?, cancelled_at = ?
+                            WHERE id = ? AND project_id = ?""",
+                         (now, body.actor.strip(), now if row["worker"] is None else None, intent_id, project_id))
+        return intent_to_model(conn, get_intent_or_404(conn, project_id, intent_id), project_id)
+
+
+@router.post("/projects/{project_id}/intents/{intent_id}/cancelled", response_model=Intent)
+def acknowledge_intent_cancel(project_id: str, intent_id: str, body: HeartbeatRequest):
+    """Dispatcher acknowledgement, only after the managed process has ended."""
+    with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = get_intent_or_404(conn, project_id, intent_id)
+        if not row["cancel_requested_at"]:
+            raise HTTPException(409, "Cancellation has not been requested")
+        if row["worker"] is not None and row["worker"] != body.worker:
+            raise HTTPException(409, "Intent belongs to another worker")
+        conn.execute("UPDATE intents SET worker = NULL, cancelled_at = COALESCE(cancelled_at, ?) WHERE id = ? AND project_id = ?",
+                     (utcnow(), intent_id, project_id))
+        return intent_to_model(conn, get_intent_or_404(conn, project_id, intent_id), project_id)
+
+
+@router.delete("/projects/{project_id}/intents/{intent_id}", status_code=204)
+def delete_intent(project_id: str, intent_id: str):
+    with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        get_project_or_404(conn, project_id)
+        row = get_intent_or_404(conn, project_id, intent_id)
+        if row["to_fact_id"] is not None:
+            raise HTTPException(409, "Concluded intents are part of the project history")
+        if row["worker"] is not None or not row["cancelled_at"]:
+            raise HTTPException(409, "Cancel the intent and wait for the worker to stop before deleting it")
+        suffix = ":" + intent_id
+        active_job = conn.execute("""SELECT id FROM jobs WHERE project_id = ? AND substr(creator, -?) = ?
+            AND (status = 'running' OR stop_state IN ('pending', 'failed', 'manual')) LIMIT 1""",
+            (project_id, len(suffix), suffix)).fetchone()
+        if active_job:
+            raise HTTPException(409, "An associated background job still needs to be stopped")
+        conn.execute("UPDATE evidence SET intent_id = NULL WHERE project_id = ? AND intent_id = ?", (project_id, intent_id))
+        conn.execute("UPDATE findings SET intent_id = NULL WHERE project_id = ? AND intent_id = ?", (project_id, intent_id))
+        conn.execute("DELETE FROM intents WHERE project_id = ? AND id = ?", (project_id, intent_id))
+    return Response(status_code=204)

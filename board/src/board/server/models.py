@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+IntentWorkerType = Literal["pi", "codex", "claudecode", "mock"]
+
 
 class Settings(BaseModel):
     intent_timeout: int = Field(ge=5)
@@ -29,6 +31,13 @@ class Intent(BaseModel):
     priority: int = 50
     blocked_by: str | None = None
     assigned_worker: str | None = None
+    assigned_worker_type: IntentWorkerType | None = None
+    dispatch_error: str | None = None
+    dispatch_error_at: str | None = None
+    dispatch_error_worker: str | None = None
+    cancel_requested_at: str | None = None
+    cancelled_at: str | None = None
+    cancelled_by: str | None = None
     priority_set_by: str | None = None
     priority_set_at: str | None = None
     excluded: bool = False
@@ -51,6 +60,7 @@ class UpdateIntentPriorityRequest(BaseModel):
 
 class UpdateIntentAssignmentRequest(BaseModel):
     assigned_worker: str | None = None
+    assigned_worker_type: IntentWorkerType | None = None
     actor: str = "human"
 
     @field_validator("assigned_worker", "actor")
@@ -62,6 +72,23 @@ class UpdateIntentAssignmentRequest(BaseModel):
         if not text:
             return None
         return text
+
+
+class FailIntentRequest(BaseModel):
+    worker: str | None = None
+    error: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("error")
+    @classmethod
+    def validate_error(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("error must not be empty")
+        return text
+
+
+class CancelIntentRequest(BaseModel):
+    actor: str = Field(default="human", min_length=1, max_length=200)
 
 
 JobStatus = Literal["running", "hit", "done", "exhausted", "failed", "killed"]
@@ -259,6 +286,7 @@ class CreateIntentRequest(BaseModel):
     priority: int = Field(default=50, ge=1, le=100)
     blocked_by: str | None = None
     assigned_worker: str | None = None
+    assigned_worker_type: IntentWorkerType | None = None
 
     model_config = {"populate_by_name": True}
 

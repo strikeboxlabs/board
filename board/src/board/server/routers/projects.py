@@ -57,7 +57,7 @@ def list_projects():
                 (SELECT COUNT(*) FROM facts WHERE project_id = p.id) AS fact_count,
                 (SELECT COUNT(*) FROM intents WHERE project_id = p.id) AS intent_count,
                 (SELECT COUNT(*) FROM intents WHERE project_id = p.id AND concluded_at IS NULL AND excluded = 0 AND worker IS NOT NULL) AS working_intent_count,
-                (SELECT COUNT(*) FROM intents WHERE project_id = p.id AND concluded_at IS NULL AND excluded = 0 AND worker IS NULL) AS unclaimed_intent_count,
+                (SELECT COUNT(*) FROM intents WHERE project_id = p.id AND concluded_at IS NULL AND excluded = 0 AND worker IS NULL AND dispatch_error IS NULL AND cancel_requested_at IS NULL) AS unclaimed_intent_count,
                 (SELECT COUNT(*) FROM hints WHERE project_id = p.id) AS hint_count
             FROM projects p
             ORDER BY p.created_at

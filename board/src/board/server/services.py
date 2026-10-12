@@ -127,6 +127,10 @@ def get_claimable_open_intent_or_404(
         raise HTTPException(409, "Intent already concluded")
     if row["excluded"]:
         raise HTTPException(409, "Intent is excluded by the operator")
+    if row["cancel_requested_at"]:
+        raise HTTPException(409, "Intent is cancelled or stopping")
+    if row["dispatch_error"]:
+        raise HTTPException(409, "Intent stopped after a worker error")
     if row["worker"] is not None and row["worker"] != worker:
         raise HTTPException(409, f"Intent is currently claimed by {row['worker']}")
     return row
@@ -176,6 +180,13 @@ def intent_to_model(conn: sqlite3.Connection, row: sqlite3.Row, project_id: str)
         priority=row["priority"],
         blocked_by=row["blocked_by"],
         assigned_worker=row["assigned_worker"],
+        assigned_worker_type=row["assigned_worker_type"],
+        dispatch_error=row["dispatch_error"],
+        dispatch_error_at=row["dispatch_error_at"],
+        dispatch_error_worker=row["dispatch_error_worker"],
+        cancel_requested_at=row["cancel_requested_at"],
+        cancelled_at=row["cancelled_at"],
+        cancelled_by=row["cancelled_by"],
         priority_set_by=row["priority_set_by"],
         priority_set_at=row["priority_set_at"],
         excluded=bool(row["excluded"]),
@@ -313,6 +324,7 @@ def expire_workers(conn: sqlite3.Connection, project_id: str | None = None) -> N
         SET worker = NULL
         WHERE to_fact_id IS NULL
           AND worker IS NOT NULL
+          AND cancel_requested_at IS NULL
           AND last_heartbeat_at IS NOT NULL
           AND (julianday(?) - julianday(last_heartbeat_at)) * 86400 > ?
     """

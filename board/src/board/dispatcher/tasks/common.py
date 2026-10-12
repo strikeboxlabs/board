@@ -425,6 +425,14 @@ def write_conclude_result_with_fact_id(
     return ConcludeWriteResult(status="failed", fact_id=None)
 
 
+class TaskFailure(str):
+    """String-compatible task outcome carrying a diagnostic for the dispatcher."""
+    def __new__(cls, outcome: str, error: str):
+        result = super().__new__(cls, outcome)
+        result.error = error
+        return result
+
+
 def best_effort_release(client: BoardClient, project_id: str, intent_id: str, worker_name: str) -> None:
     response = client.release(project_id, intent_id, worker_name)
     if not response.ok and response.status_code not in (403, 409):

@@ -78,6 +78,8 @@ class LocalProcess:
             self._terminate()
         with suppress(subprocess.TimeoutExpired):
             self._process.wait(timeout=FORCE_KILL_REAP_TIMEOUT_SECONDS)
+        if self._process.returncode is not None and self._process.returncode != 0:
+            self._terminate()
         if self._stdout_thread is not None:
             self._stdout_thread.join(timeout=STREAM_JOIN_TIMEOUT_SECONDS)
         if self._stderr_thread is not None:
@@ -105,11 +107,15 @@ class LocalProcess:
     def _terminate(self) -> None:
         with self._kill_lock:
             process = self._process
-            if process is None or process.poll() is not None:
+            if process is None:
+                return
+            if process.poll() is not None:
+                self._signal_group(process, signal.SIGKILL)
                 return
             self._signal_group(process, signal.SIGTERM)
             try:
                 process.wait(timeout=self._term_grace)
+                self._signal_group(process, signal.SIGKILL)
                 return
             except subprocess.TimeoutExpired:
                 pass
@@ -118,7 +124,8 @@ class LocalProcess:
     @staticmethod
     def _signal_group(process: subprocess.Popen[str], sig: int) -> None:
         try:
-            os.killpg(os.getpgid(process.pid), sig)
+            # start_new_session=True makes the original PID the stable group ID.
+            os.killpg(process.pid, sig)
         except (ProcessLookupError, PermissionError):
             with suppress(ProcessLookupError, PermissionError, ValueError):
                 process.send_signal(sig)

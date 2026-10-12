@@ -93,6 +93,9 @@ def run_reason_task(
                 "priority": intent.priority,
                 "blocked_by": intent.blocked_by,
                 "assigned_worker": intent.assigned_worker,
+                "assigned_worker_type": intent.assigned_worker_type,
+                "dispatch_error": intent.dispatch_error,
+                "cancel_requested_at": intent.cancel_requested_at,
             }
             for intent in project.intents
             if intent.to is None and not intent.excluded

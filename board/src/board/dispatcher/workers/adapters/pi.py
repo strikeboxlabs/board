@@ -104,6 +104,8 @@ class PiDriver(WorkerDriver):
             session_dir,
             "--no-extensions",
             "--no-skills",
+            "--skill",
+            "/opt/research-library/skills",
             "--no-prompt-templates",
             "--no-themes",
             "--no-context-files",

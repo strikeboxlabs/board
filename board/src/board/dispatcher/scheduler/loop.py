@@ -20,6 +20,7 @@ from board.dispatcher.runtime.local_backend import LocalBackend
 from board.dispatcher.runtime.startup_healthcheck import format_failure_summary, run_startup_healthchecks
 from board.dispatcher.scheduler.worker_select import choose_worker
 from board.dispatcher.scheduler.reason_gate import ReasonGate, graph_signature
+from board.dispatcher.scheduler.intent_failures import IntentFailures
 from board.dispatcher.metrics import record_metric
 from board.dispatcher.workers.registry import get_driver
 from board.dispatcher.tasks.bootstrap import run_bootstrap_task
@@ -59,6 +60,9 @@ class DispatcherLoop:
             assert self.config.container is not None
             self.container_manager = ContainerManager(self.config.container)
         self.reason_gate = ReasonGate(self.container_manager, self.config.tasks.reason)
+        self.intent_failures = IntentFailures(self.container_manager)
+        self._intent_error_latches = {}
+        self._pending_cancel_acks = {}
         self.executor = ThreadPoolExecutor(max_workers=self.config.runtime.max_workers)
         self.cleanup_executor = ThreadPoolExecutor(max_workers=max(1, min(8, self.config.runtime.max_workers)))
         self.futures: dict[Future[str], RunningTask] = {}
@@ -105,6 +109,7 @@ class DispatcherLoop:
                     self._initialize_reason_checkpoints(summaries)
                     self._refresh_runtime_projects(summaries)
                     self._cancel_inactive_tasks(summaries)
+                    self._cancel_requested_intents()
                     self._queue_container_cleanups(summaries)
                     self._persist_aborted_reports(summaries)
                     self._monitor_jobs(summaries)
@@ -319,6 +324,8 @@ class DispatcherLoop:
             for intent in project.intents
             if intent.to is None
             and not intent.excluded
+            and not intent.dispatch_error
+            and not intent.cancel_requested_at
             and intent.worker is None
             and intent.id not in running_intent_ids
             and not self._is_bootstrap_intent(intent)
@@ -337,11 +344,17 @@ class DispatcherLoop:
             pinned_waiting: list[str] = []
             job_blocked = 0
             for intent in unclaimed_intents:
+                if self._intent_is_failed(summary.id, intent):
+                    continue
+                routing_error = self._intent_routing_error(intent)
+                if routing_error:
+                    self._halt_intent(summary.id, intent.id, None, routing_error)
+                    continue
                 if intent.blocked_by and intent.blocked_by in running_job_ids:
                     job_blocked += 1
                     continue
-                if intent.assigned_worker and not self._worker_available(
-                    summary.id, intent.assigned_worker, "explore"
+                if (intent.assigned_worker or intent.assigned_worker_type) and not self._worker_available(
+                    summary.id, intent.assigned_worker, "explore", required_type=intent.assigned_worker_type
                 ):
                     pinned_waiting.append(intent.id)
                     continue
@@ -358,7 +371,7 @@ class DispatcherLoop:
                 self._log_changed(
                     f"{skip_scope}:pinned_waiting",
                     logging.INFO,
-                    "skip project=%s pinned intents waiting for their assigned worker intents=%s",
+                    "skip project=%s routed intents waiting for a matching worker intents=%s",
                     summary.id,
                     sorted(pinned_waiting),
                 )
@@ -546,6 +559,7 @@ class DispatcherLoop:
             project.project.id,
             "explore",
             required_worker=intent.assigned_worker,
+            required_type=intent.assigned_worker_type,
         )
         worker = selection.worker
         if worker is None:
@@ -604,26 +618,30 @@ class DispatcherLoop:
         LOG.info("dispatched explore project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
         return True
 
-    def _worker_available(self, project_id: str, worker_name: str, task_type: str) -> bool:
-        """Whether the named worker could take a task right now (pin feasibility)."""
+    def _worker_available(
+        self, project_id: str, worker_name: str | None, task_type: str, required_type: str | None = None
+    ) -> bool:
+        """Whether any worker matching the routing constraints has a free slot."""
         now = time.time()
         running_counts = self._worker_counts()
         for worker in self.config.workers:
-            if worker.name != worker_name:
+            if worker_name is not None and worker.name != worker_name:
+                continue
+            if required_type is not None and worker.type != required_type:
                 continue
             if task_type not in worker.task_types:
-                return False
+                continue
             if running_counts.get(worker.name, 0) >= worker.max_running:
-                return False
+                continue
             if self.worker_unhealthy_until.get(worker.name, 0) > now:
-                return False
+                continue
             if self.worker_rejected_until.get((project_id, task_type, worker.name), 0) > now:
-                return False
+                continue
             return True
         return False
 
     def _select_worker(
-        self, project_id: str, task_type: str, required_worker: str | None = None
+        self, project_id: str, task_type: str, required_worker: str | None = None, required_type: str | None = None
     ) -> WorkerSelection:
         now = time.time()
         candidates: list[WorkerConfig] = []
@@ -634,6 +652,8 @@ class DispatcherLoop:
         running_counts = self._worker_counts()
         for worker in self.config.workers:
             if required_worker is not None and worker.name != required_worker:
+                continue
+            if required_type is not None and worker.type != required_type:
                 continue
             if task_type not in worker.task_types:
                 blocked_task_type.append(worker.name)
@@ -983,6 +1003,11 @@ class DispatcherLoop:
             task = self.futures.pop(future)
             try:
                 outcome = future.result()
+                if task.intent_id and outcome not in ("success", "cancelled"):
+                    error = getattr(outcome, "error", f"Worker {task.worker_name} stopped with outcome '{outcome}'. Automatic retries are stopped.")
+                    self._halt_intent(task.project_id, task.intent_id, task.worker_name, error)
+                if task.intent_id and (outcome == "cancelled" or task.cancellation.reason == "intent_cancelled"):
+                    self._ack_intent_cancel(task)
                 self._record_task_outcome(task, outcome)
                 if outcome == "cancelled":
                     LOG.info(
@@ -1041,7 +1066,85 @@ class DispatcherLoop:
                     )
             except Exception:
                 LOG.exception("task crashed project=%s task=%s worker=%s", task.project_id, task.task_type, task.worker_name)
+                if task.intent_id:
+                    if task.cancellation.reason == "intent_cancelled":
+                        self._ack_intent_cancel(task)
+                    else:
+                        self._halt_intent(task.project_id, task.intent_id, task.worker_name,
+                                          f"Worker {task.worker_name} crashed. Automatic retries are stopped.")
                 self._record_task_outcome(task, "crashed")
+
+    def _halt_intent(self, project_id, intent_id, worker, error):
+        if not hasattr(self, "_intent_error_latches"):
+            self._intent_error_latches = {}
+        self._intent_error_latches[(project_id, intent_id)] = {"worker": worker, "error": error}
+        gate = getattr(self, "intent_failures", None)
+        if gate is not None:
+            try:
+                gate.record(project_id, intent_id, worker, error)
+            except Exception:
+                LOG.exception("could not persist intent error latch project=%s intent=%s", project_id, intent_id)
+        try:
+            response = self.client.fail_intent(project_id, intent_id, worker, error)
+            if not response.ok and response.status_code not in (404, 409):
+                LOG.error("could not record intent error project=%s intent=%s status=%s", project_id, intent_id, response.status_code)
+        except Exception:
+            LOG.exception("could not record intent error project=%s intent=%s", project_id, intent_id)
+
+    def _intent_is_failed(self, project_id, intent):
+        failure = getattr(self, "_intent_error_latches", {}).get((project_id, intent.id))
+        gate = getattr(self, "intent_failures", None)
+        if failure is None and gate is not None:
+            try:
+                failure = gate.state(project_id).get(intent.id)
+            except Exception:
+                self._halt_intent(project_id, intent.id, None, "Intent error history could not be read. Dispatch is stopped.")
+                return True
+        if failure:
+            try:
+                self.client.fail_intent(project_id, intent.id, failure['worker'], failure['error'])
+            except Exception:
+                LOG.warning("intent error still waiting for API persistence project=%s intent=%s", project_id, intent.id)
+            return True
+        return False
+
+    def _intent_routing_error(self, intent):
+        if not intent.assigned_worker and not intent.assigned_worker_type:
+            return None
+        matching = [w for w in self.config.workers if "explore" in w.task_types
+                    and (not intent.assigned_worker or w.name == intent.assigned_worker)
+                    and (not intent.assigned_worker_type or w.type == intent.assigned_worker_type)]
+        if not matching:
+            target = intent.assigned_worker or intent.assigned_worker_type
+            return f"No execution worker is registered for '{target}' with the selected routing constraints. Dispatch is stopped."
+        return None
+
+    def _cancel_requested_intents(self):
+        for task in list(getattr(self, "_pending_cancel_acks", {}).values()):
+            self._ack_intent_cancel(task)
+        projects = {}
+        for task in list(self.futures.values()):
+            if not task.intent_id:
+                continue
+            if task.project_id not in projects:
+                projects[task.project_id] = self.client.get_project(task.project_id)
+            intent = next((i for i in projects[task.project_id].intents if i.id == task.intent_id), None)
+            if intent is None or intent.cancel_requested_at:
+                task.cancellation.cancel("intent_cancelled")
+
+    def _ack_intent_cancel(self, task):
+        if not hasattr(self, "_pending_cancel_acks"):
+            self._pending_cancel_acks = {}
+        key = (task.project_id, task.intent_id)
+        self._pending_cancel_acks[key] = task
+        try:
+            response = self.client.acknowledge_intent_cancel(task.project_id, task.intent_id, task.worker_name)
+            if response.ok or response.status_code in (404, 409):
+                self._pending_cancel_acks.pop(key, None)
+            else:
+                LOG.error("intent cancel acknowledgement failed project=%s intent=%s status=%s", task.project_id, task.intent_id, response.status_code)
+        except Exception:
+            LOG.exception("intent cancel acknowledgement failed project=%s intent=%s", task.project_id, task.intent_id)
 
     def _record_task_outcome(self, task: RunningTask, outcome: str) -> None:
         gate = getattr(self, "reason_gate", None)

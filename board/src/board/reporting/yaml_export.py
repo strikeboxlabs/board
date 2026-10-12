@@ -74,6 +74,12 @@ def render_graph_yaml(conn: sqlite3.Connection, project_id: str) -> str:
         assigned_worker = i["assigned_worker"] if "assigned_worker" in i.keys() else None
         if assigned_worker:
             entry["assigned_worker"] = assigned_worker
+        assigned_worker_type = i["assigned_worker_type"] if "assigned_worker_type" in i.keys() else None
+        if assigned_worker_type:
+            entry["assigned_worker_type"] = assigned_worker_type
+        for column in ("dispatch_error", "dispatch_error_at", "dispatch_error_worker", "cancel_requested_at", "cancelled_at", "cancelled_by"):
+            if column in i.keys() and i[column]:
+                entry[column] = i[column]
         if "priority_set_by" in i.keys() and i["priority_set_by"]:
             entry["priority_set_by"] = i["priority_set_by"]
         intent_list.append(entry)
