@@ -15,7 +15,7 @@ def main():
 
 @main.command()
 @click.option("--host", default="127.0.0.1", show_default=True, help="Bind host")
-@click.option("--port", default="8000", show_default=True, help="Bind port")
+@click.option("--port", default=8000, show_default=True, help="Bind port")
 @click.option(
     "--db-path",
     type=click.Path(),
