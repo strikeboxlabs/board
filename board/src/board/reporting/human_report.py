@@ -37,6 +37,8 @@ def render_human_report(
     else:
         status_line = f"**Project:** `{header['project_id']}` · **Status:** {header['status']}"
     lines.append(status_line + "  ")
+    if header.get("completion_outcome") == "current_results":
+        lines.append("**Outcome:** concluded with current results. The original goal is not asserted to have been achieved; unresolved questions and coverage gaps remain.  ")
     lines.append(f"**Period:** {header['time_window']['start']} → {header['time_window']['end']}  ")
     lines.append(f"**Generated:** {header['generated_at']}")
     lines.append("")

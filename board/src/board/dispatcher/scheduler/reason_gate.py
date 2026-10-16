@@ -8,19 +8,14 @@ import time
 import uuid
 from pathlib import Path
 
+from board.planning import planner_inputs
+
 LOG = logging.getLogger(__name__)
 
 
 def graph_signature(project, config) -> str:
     # Ignore leases and heartbeats: they do not make a failed decision useful again.
-    payload = {
-        "facts": [f.model_dump() for f in project.facts],
-        "hints": [h.model_dump() for h in project.hints],
-        "intents": [(i.id, i.to, i.description, i.priority, i.blocked_by, i.assigned_worker, i.assigned_worker_type, i.skill_profiles, i.excluded, i.dispatch_error, i.cancel_requested_at, i.cancelled_at) for i in project.intents],
-        "jobs": [(j.id, j.status) for j in project.jobs],
-        "policy": config.model_dump(),
-        "execution_notes": project.project.execution_notes,
-    }
+    payload = {**planner_inputs(project), "policy": config.model_dump()}
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 

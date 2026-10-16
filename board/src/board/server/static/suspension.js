@@ -5,6 +5,8 @@ function suspensionControls() {
     resumeError: '',
     resumeForm: { id: '', title: '', notes: '', excluded: [], confirmedJobs: [], intents: [], jobs: [], waiting: false },
     suspensionLabel(meta) {
+      if (meta?.status === 'completed' && meta.completion_outcome === 'current_results') return 'concluded';
+      if (meta?.status === 'active' && meta.planner_wait && !meta.reason) return 'planner waiting';
       if (meta?.status !== 'stopped') return meta?.status || '';
       return meta.suspension_id && meta.suspension_ack_id !== meta.suspension_id ? 'suspending' : 'suspended';
     },

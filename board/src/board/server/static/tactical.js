@@ -81,6 +81,8 @@ function tacticalConsole() {
       if (this.replay.active) return this.replay.playing ? 'REPLAY RUNNING' : 'REPLAY PAUSED';
       if (this.connectionState === 'offline') return 'DATA STALE';
       const status = this.project?.project?.status;
+      if (status === 'completed' && this.project?.project?.completion_outcome === 'current_results') return 'ASSESSMENT CONCLUDED';
+      if (status === 'active' && this.project?.project?.planner_wait && !this.project?.project?.reason) return 'PLANNER WAITING';
       if (status !== 'active') return { stopped: 'OPERATION SUSPENDED', completed: 'OPERATION COMPLETE', aborted: 'OPERATION ABORTED' }[status] || 'STANDBY';
       return this.project?.project?.reason || this.operationCounts().running > 0 ? 'AGENTS WORKING' : 'AWAITING ACTIVITY';
     },

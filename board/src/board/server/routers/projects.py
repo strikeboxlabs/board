@@ -17,10 +17,14 @@ from board.server.models import (
     ReopenRequest,
     ReopenResponse,
     ReasonClaimRequest,
+    ReasonWaitRequest,
+    ReasonHeartbeatRequest,
+    PlannerWait,
     UpdateProjectTitleRequest,
     UpdateProjectStatusRequest,
     SuspensionAckRequest,
 )
+from board.planning import planner_input_signature
 from board.server.services import (
     abort_project,
     build_intents,
@@ -271,17 +275,43 @@ def claim_project_reason(project_id: str, body: ReasonClaimRequest):
             SET reason_worker = ?,
                 reason_trigger = ?,
                 reason_started_at = ?,
-                reason_last_heartbeat_at = ?
+                reason_last_heartbeat_at = ?,
+                reason_lease_id = ?,
+                planner_wait = NULL
             WHERE id = ?
             """,
-            (body.worker, body.trigger, now, now, project_id),
+            (body.worker, body.trigger, now, now, uuid4().hex, project_id),
         )
         updated = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
         return project_meta_from_row(updated)
 
 
+@router.post("/projects/{project_id}/reason/wait", response_model=ProjectMeta)
+def record_reason_wait(project_id: str, body: ReasonWaitRequest):
+    with get_conn() as conn:
+        # Serialize the lease/input check with the write, including other writers.
+        conn.execute("BEGIN IMMEDIATE")
+        check_project_active(conn, project_id)
+        expire_reason_leases(conn, project_id)
+        row = get_project_or_404(conn, project_id)
+        if row["reason_worker"] != body.worker or row["reason_lease_id"] != body.lease_id:
+            raise HTTPException(409, "Planner lease changed; discarded stale wait decision")
+        current = ProjectDetail(
+            project=project_meta_from_row(row),
+            facts=[Fact(**dict(f)) for f in conn.execute("SELECT * FROM facts WHERE project_id = ?", (project_id,))],
+            hints=[Hint(**dict(h)) for h in conn.execute("SELECT * FROM hints WHERE project_id = ? ORDER BY created_at", (project_id,))],
+            intents=build_intents(conn, project_id), jobs=build_jobs(conn, project_id),
+        )
+        if planner_input_signature(current) != body.input_signature:
+            raise HTTPException(409, "Planner inputs changed; discarded stale wait decision")
+        decision = PlannerWait(reason=body.reason, since=utcnow(), worker=body.worker,
+                               input_signature=body.input_signature)
+        conn.execute("UPDATE projects SET planner_wait = ? WHERE id = ?", (decision.model_dump_json(), project_id))
+        return project_meta_from_row(get_project_or_404(conn, project_id))
+
+
 @router.post("/projects/{project_id}/reason/heartbeat", response_model=ProjectMeta)
-def heartbeat_project_reason(project_id: str, body: HeartbeatRequest):
+def heartbeat_project_reason(project_id: str, body: ReasonHeartbeatRequest):
     with get_conn() as conn:
         check_project_active(conn, project_id)
         expire_reason_leases(conn, project_id)
@@ -291,6 +321,8 @@ def heartbeat_project_reason(project_id: str, body: HeartbeatRequest):
             raise HTTPException(409, "Project reason is not currently claimed")
         if current_worker != body.worker:
             raise HTTPException(409, f"Project reason is currently claimed by {current_worker}")
+        if body.lease_id is not None and row["reason_lease_id"] != body.lease_id:
+            raise HTTPException(409, "Planner lease changed")
 
         now = utcnow()
         conn.execute(
@@ -302,7 +334,7 @@ def heartbeat_project_reason(project_id: str, body: HeartbeatRequest):
 
 
 @router.post("/projects/{project_id}/reason/release", response_model=ProjectMeta)
-def release_project_reason(project_id: str, body: HeartbeatRequest):
+def release_project_reason(project_id: str, body: ReasonHeartbeatRequest):
     with get_conn() as conn:
         check_project_active(conn, project_id)
         expire_reason_leases(conn, project_id)
@@ -312,6 +344,8 @@ def release_project_reason(project_id: str, body: HeartbeatRequest):
             return project_meta_from_row(row)
         if current_worker != body.worker:
             raise HTTPException(409, f"Project reason is currently claimed by {current_worker}")
+        if body.lease_id is not None and row["reason_lease_id"] != body.lease_id:
+            raise HTTPException(409, "Planner lease changed")
 
         clear_project_reason(conn, project_id)
         updated = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
@@ -321,8 +355,19 @@ def release_project_reason(project_id: str, body: HeartbeatRequest):
 @router.post("/projects/{project_id}/complete", response_model=Intent)
 def complete_project(project_id: str, body: CompleteRequest):
     with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         check_project_active(conn, project_id)
         expire_reason_leases(conn, project_id)
+        if body.outcome == "current_results":
+            # A bounded conclusion must not silently discard active work.
+            if conn.execute("SELECT 1 FROM intents WHERE project_id = ? AND concluded_at IS NULL AND excluded = 0 LIMIT 1", (project_id,)).fetchone():
+                raise HTTPException(409, "Conclude or exclude unfinished intents before closing with current results")
+            if conn.execute("SELECT 1 FROM jobs WHERE project_id = ? AND status = 'running' LIMIT 1", (project_id,)).fetchone():
+                raise HTTPException(409, "Stop running jobs before closing with current results")
+            if conn.execute("SELECT 1 FROM jobs WHERE project_id = ? AND stop_state IN ('pending', 'manual', 'failed') LIMIT 1", (project_id,)).fetchone():
+                raise HTTPException(409, "Confirm background jobs have stopped before closing with current results")
+            if get_project_or_404(conn, project_id)["reason_worker"] is not None:
+                raise HTTPException(409, "Wait for the planner to finish before closing with current results")
         validate_facts_exist(conn, project_id, body.from_)
         validate_goal_not_in_sources(body.from_)
 
@@ -342,13 +387,15 @@ def complete_project(project_id: str, body: CompleteRequest):
             """
             UPDATE projects
             SET status = 'completed',
+                completion_outcome = ?,
                 reason_worker = NULL,
                 reason_trigger = NULL,
                 reason_started_at = NULL,
+                reason_lease_id = NULL,
                 reason_last_heartbeat_at = NULL
             WHERE id = ?
             """,
-            (project_id,),
+            (body.outcome, project_id),
         )
 
         return Intent(
@@ -404,7 +451,7 @@ def reopen_project(project_id: str, body: ReopenRequest):
             )
         clear_project_reason(conn, project_id)
         conn.execute(
-            "UPDATE projects SET status = 'active' WHERE id = ?",
+            "UPDATE projects SET status = 'active', completion_outcome = NULL WHERE id = ?",
             (project_id,),
         )
 

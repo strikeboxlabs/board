@@ -31,6 +31,7 @@ from board.dispatcher.tasks.common import (
 )
 from board.dispatcher.workers.registry import get_driver
 from board.server.models import ProjectDetail
+from board.planning import planner_input_signature
 
 LOG = logging.getLogger(__name__)
 
@@ -47,7 +48,8 @@ def run_reason_task(
     driver = get_driver(worker.type, config.runtime.execution)
     task_started = time.perf_counter()
     healthcheck_timeout = config.runtime.healthcheck_timeout
-    lease = HeartbeatLease.for_reason(client, project.project.id, worker.name, config.runtime.interval)
+    lease_id = project.project.reason.lease_id if project.project.reason else None
+    lease = HeartbeatLease.for_reason(client, project.project.id, worker.name, config.runtime.interval, lease_id)
     lease.start()
     try:
         container_name = container_manager.ensure_running(project.project.id)
@@ -239,6 +241,14 @@ def run_reason_task(
             LOG.info("reason deferred project=%s explanation=%s", project.project.id, data["reason"])
             from board.dispatcher.metrics import record_metric
             record_metric(container_manager, project.project.id, {"event": "planner_wait", "explanation": data["reason"]})
+            if not lease_id:
+                LOG.warning("cannot persist planner wait without a lease token project=%s", project.project.id)
+                return "failed"
+            response = client.record_reason_wait(project.project.id, worker.name, lease_id,
+                                                 data["reason"], planner_input_signature(project))
+            if not response.ok and response.status_code not in (403, 409):
+                LOG.warning("planner wait write failed project=%s status=%s", project.project.id, response.status_code)
+                return "failed"
             return "success"
         if kind == "rejected":
             LOG.warning(
@@ -353,4 +363,4 @@ def run_reason_task(
         return "success"
     finally:
         lease.stop()
-        best_effort_release_reason(client, project.project.id, worker.name)
+        best_effort_release_reason(client, project.project.id, worker.name, lease_id)

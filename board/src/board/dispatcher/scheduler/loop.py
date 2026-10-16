@@ -81,7 +81,8 @@ class DispatcherLoop:
         self._log_state: dict[str, tuple[int, str, tuple[object, ...]]] = {}
         self._cleanup_pending: set[str] = set()
         self._inactive_cleanup_done: dict[str, str] = {}
-        self._abort_reports_done: set[str] = set()
+        self._terminal_reports_done: set[tuple] = set()
+        self._terminal_report_keys: dict[str, tuple] = {}
         self.project_cursor = 0
         self._settings_checked = False
         self._startup_healthchecks_checked = False
@@ -118,7 +119,7 @@ class DispatcherLoop:
                     self._cancel_inactive_tasks(summaries)
                     self._cancel_requested_intents()
                     self._queue_container_cleanups(summaries)
-                    self._persist_aborted_reports(summaries)
+                    self._persist_terminal_reports(summaries)
                     self._monitor_jobs(summaries)
                     self._acknowledge_suspensions(summaries)
                     self._dispatch_available(summaries)
@@ -472,6 +473,12 @@ class DispatcherLoop:
                 claim.status_code,
             )
             return False
+        # Carry the actual lease token into the task, which started from an
+        # earlier graph snapshot. It fences late writes from a previous lease.
+        if isinstance(claim.data, dict) and claim.data.get("reason"):
+            from board.server.models import ProjectReason
+            project = project.model_copy(deep=True)
+            project.project.reason = ProjectReason.model_validate(claim.data["reason"])
         try:
             if gate is not None:
                 gate.started(project.project.id, signature)
@@ -1217,6 +1224,9 @@ class DispatcherLoop:
         for summary in summaries:
             if summary.status != "completed":
                 continue
+            if self._terminal_report_key(summary) not in self._terminal_reports_done:
+                # Removing/stopping a runtime must never outrun final artifacts.
+                continue
             if self._inactive_cleanup_done.get(summary.id) == summary.status:
                 continue
             container_name = self.container_manager.container_name(summary.id)
@@ -1245,22 +1255,30 @@ class DispatcherLoop:
             self.cleanup_futures[future] = (container_name, summary.id, summary.status)
             self._cleanup_pending.add(container_name)
 
-    def _persist_aborted_reports(self, summaries: list[ProjectSummary]) -> None:
-        """Aborted projects get the full report set written, like completed ones.
+    @staticmethod
+    def _terminal_report_key(summary: ProjectSummary) -> tuple:
+        return (summary.id, summary.status, summary.completion_outcome,
+                summary.fact_count, summary.intent_count, summary.hint_count)
 
-        Abandoning a run must not lose its record: the dispatcher notices the
-        terminal ``aborted`` status and persists timeline, graph and both report
-        flavours into the project's durable ``reports/`` directory.
+    def _persist_terminal_reports(self, summaries: list[ProjectSummary]) -> None:
+        """Persist terminal results, including completions made through the UI.
+
+        Track the terminal graph revision so reopening/concluding refreshes disk
+        reports. Failed writes are retried after the future has been reaped.
         """
         for summary in summaries:
-            if summary.status != "aborted" or summary.id in self._abort_reports_done:
+            if summary.status not in ("completed", "aborted"):
                 continue
-            self._abort_reports_done.add(summary.id)
-            LOG.info("persisting reports for aborted project project=%s", summary.id)
+            key = self._terminal_report_key(summary)
+            name = f"terminal-reports-{summary.id}"
+            if key in self._terminal_reports_done or name in self._terminal_report_keys:
+                continue
+            LOG.info("persisting reports for terminal project project=%s status=%s", summary.id, summary.status)
             future = self.cleanup_executor.submit(
                 persist_project_reports, self.client, self.container_manager, summary.id
             )
-            self.cleanup_futures[future] = (f"abort-reports-{summary.id}", None, None)
+            self._terminal_report_keys[name] = key
+            self.cleanup_futures[future] = (name, summary.id, "terminal-report")
 
     def _queue_container_cleanups(self, summaries: list[ProjectSummary]) -> None:
         self._cleanup_completed_containers(summaries)
@@ -1271,6 +1289,14 @@ class DispatcherLoop:
         for future in done:
             name, project_id, target_status = self.cleanup_futures.pop(future)
             self._cleanup_pending.discard(name)
+            if target_status == "terminal-report":
+                key = self._terminal_report_keys.pop(name)
+                try:
+                    if future.result():
+                        self._terminal_reports_done.add(key)
+                except Exception:
+                    LOG.exception("terminal report persistence failed project=%s", project_id)
+                continue
             try:
                 success = future.result()
                 if success and project_id is not None and target_status in ("completed", "stopped"):

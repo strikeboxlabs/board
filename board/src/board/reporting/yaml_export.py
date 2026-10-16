@@ -39,6 +39,8 @@ def render_graph_yaml(conn: sqlite3.Connection, project_id: str) -> str:
 
     if proj["execution_notes"]:
         graph["project"]["execution_notes"] = proj["execution_notes"]
+    if proj["completion_outcome"]:
+        graph["project"]["completion_outcome"] = proj["completion_outcome"]
 
     if hints:
         graph["hints"] = [

@@ -154,6 +154,11 @@ class FakeClient:
     released_reasons: list[tuple[str, str]] = field(default_factory=list)
     registered_evidence: list[tuple[str, dict]] = field(default_factory=list)
     created_findings: list[tuple[str, dict]] = field(default_factory=list)
+    planner_waits: list[tuple] = field(default_factory=list)
+
+    def record_reason_wait(self, project_id, worker, lease_id, reason, input_signature):
+        self.planner_waits.append((project_id, worker, lease_id, reason, input_signature))
+        return ApiResult(200, {})
 
     def get_project(self, _project_id: str) -> ProjectDetail:
         return self.project
@@ -175,14 +180,14 @@ class FakeClient:
         self.released.append((project_id, intent_id, worker))
         return ApiResult(200, {})
 
-    def release_reason(self, project_id: str, worker: str) -> ApiResult:
+    def release_reason(self, project_id: str, worker: str, lease_id: str | None = None) -> ApiResult:
         self.released_reasons.append((project_id, worker))
         return ApiResult(200, {})
 
     def heartbeat(self, _project_id: str, _intent_id: str, _worker: str) -> ApiResult:
         return ApiResult(200, {})
 
-    def reason_heartbeat(self, _project_id: str, _worker: str) -> ApiResult:
+    def reason_heartbeat(self, _project_id: str, _worker: str, lease_id: str | None = None) -> ApiResult:
         return ApiResult(200, {})
 
     def register_evidence(self, project_id: str, payload: dict) -> ApiResult:

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
-from board.server.models import Intent, Job, ProjectMeta, ProjectReason
+from board.server.models import Intent, Job, PlannerWait, ProjectMeta, ProjectReason
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -248,6 +248,7 @@ def project_reason_from_row(row: sqlite3.Row) -> ProjectReason | None:
         trigger=row["reason_trigger"],
         started_at=row["reason_started_at"],
         last_heartbeat_at=row["reason_last_heartbeat_at"],
+        lease_id=row["reason_lease_id"],
     )
 
 
@@ -265,6 +266,8 @@ def project_meta_from_row(row: sqlite3.Row) -> ProjectMeta:
         suspension_id=row["suspension_id"],
         suspension_ack_id=row["suspension_ack_id"],
         execution_notes=row["execution_notes"],
+        planner_wait=PlannerWait.model_validate_json(row["planner_wait"]) if row["planner_wait"] else None,
+        completion_outcome=row["completion_outcome"],
     )
 
 
@@ -290,6 +293,7 @@ def abort_project(conn: sqlite3.Connection, project_id: str, reason: str, actor:
             reason_worker = NULL,
             reason_trigger = NULL,
             reason_started_at = NULL,
+            reason_lease_id = NULL,
             reason_last_heartbeat_at = NULL
         WHERE id = ?
         """,
@@ -311,6 +315,7 @@ def clear_project_reason(conn: sqlite3.Connection, project_id: str) -> None:
         SET reason_worker = NULL,
             reason_trigger = NULL,
             reason_started_at = NULL,
+            reason_lease_id = NULL,
             reason_last_heartbeat_at = NULL
         WHERE id = ?
         """,
@@ -345,6 +350,7 @@ def expire_reason_leases(conn: sqlite3.Connection, project_id: str | None = None
         SET reason_worker = NULL,
             reason_trigger = NULL,
             reason_started_at = NULL,
+            reason_lease_id = NULL,
             reason_last_heartbeat_at = NULL
         WHERE reason_worker IS NOT NULL
           AND reason_last_heartbeat_at IS NOT NULL

@@ -178,6 +178,7 @@ def build_asset_map(conn: sqlite3.Connection, project_id: str) -> dict:
             "id": project_id,
             "title": project["title"],
             "status": project["status"],
+            "completion_outcome": project["completion_outcome"],
         },
         "summary": {
             "node_count": len(nodes),
@@ -598,6 +599,8 @@ def render_asset_inventory_md(asset_map: dict) -> str:
     lines.append(f"# Attack Surface Inventory — {header['title']}")
     lines.append("")
     lines.append(f"**Project:** `{header['id']}` · **Status:** {header['status']}  ")
+    if header.get("completion_outcome") == "current_results":
+        lines.append("**Outcome:** concluded with current results; the original goal is not asserted to have been achieved.  ")
     lines.append(
         f"**Assets:** {summary['node_count']} ({_counts_line(summary['counts'])}) · "
         f"**Relations:** {summary['edge_count']}"

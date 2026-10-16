@@ -281,7 +281,7 @@ def persist_project_exports(
     client: BoardClient,
     container_manager: ContainerManager,
     project_id: str,
-) -> None:
+) -> bool:
     """Refresh <project>/reports/timeline.txt and graph.yaml.
 
     The server renders both (single source of truth); the dispatcher persists them so
@@ -292,17 +292,19 @@ def persist_project_exports(
         for filename, export_format in (("timeline.txt", "timeline"), ("graph.yaml", "yaml")):
             text = client.export_project(project_id, export_format)
             (reports_dir / filename).write_text(text, encoding="utf-8")
+        return True
     except Exception:
         LOG.warning("failed to persist project exports project=%s", project_id, exc_info=True)
+        return False
 
 
 def persist_project_reports(
     client: BoardClient,
     container_manager: ContainerManager,
     project_id: str,
-) -> None:
+) -> bool:
     """Persist the full report set on project completion (no human action required)."""
-    persist_project_exports(client, container_manager, project_id)
+    exports_ok = persist_project_exports(client, container_manager, project_id)
     rendered = []
     try:
         reports_dir = container_manager.reports_dir(project_id)
@@ -343,6 +345,7 @@ def persist_project_reports(
         LOG.warning("failed to persist project reports project=%s", project_id, exc_info=True)
     if rendered:
         LOG.info("project reports persisted project=%s files=%s", project_id, rendered)
+    return exports_ok and len(rendered) == 6
 
 
 def project_allows_conclude_fallback(client: BoardClient, project_id: str, *, worker_name: str, intent_id: str) -> bool:
@@ -359,8 +362,8 @@ def project_allows_conclude_fallback(client: BoardClient, project_id: str, *, wo
     return False
 
 
-def best_effort_release_reason(client: BoardClient, project_id: str, worker_name: str) -> None:
-    response = client.release_reason(project_id, worker_name)
+def best_effort_release_reason(client: BoardClient, project_id: str, worker_name: str, lease_id: str | None = None) -> None:
+    response = client.release_reason(project_id, worker_name, lease_id) if lease_id is not None else client.release_reason(project_id, worker_name)
     if not response.ok and response.status_code not in (403, 409):
         LOG.warning(
             "reason release failed project=%s worker=%s status=%s",

@@ -108,6 +108,8 @@ status          # "active" | "stopped" | "completed"
 bootstrap_enabled  # Allow consumers to bootstrap the initial state; defaults to true
 created_at
 reason          # Current project-level reason lease; null means no reason task is running
+planner_wait    # Last valid wait {reason, since, worker, input_signature}; null otherwise
+completion_outcome # null while open; goal_met or current_results when completed
 ```
 
 ### Project.reason
@@ -117,7 +119,28 @@ worker             # Consumer currently running reason
 trigger            # Consumer-defined trigger for this reason task
 started_at         # When this reason task started
 last_heartbeat_at  # Time of the latest reason heartbeat
+lease_id           # UUID fencing decisions to this lease
 ```
+
+`POST /projects/{id}/reason/wait` accepts `worker`, `lease_id`, `reason` and
+`input_signature` (SHA-256 of the stable planner inputs). It requires an active
+project and the current lease. A changed lease or graph returns `409`; inactive
+projects return `403`. The persisted reason survives release and server restarts.
+New evidence, work, job status or execution policy clears it; lease heartbeats do
+not, and no-op edits preserve it. A fresh planning claim also clears it. The UI treats this as a planner wait,
+not a suspended project or proof that other workers have stopped.
+
+Reason heartbeat and release accept optional `lease_id` for compatibility with
+older clients. New clients send the current UUID; stale UUIDs return `409` even
+when the worker name is unchanged.
+
+`POST /projects/{id}/complete` accepts optional `outcome` (`goal_met`, the default,
+or `current_results`). The latter is an explicit operator conclusion without a
+claim that the original goal was met, and returns `409` while unfinished,
+non-excluded intents, running jobs, unresolved background stop acknowledgements
+or an active planner remain. Both outcomes use
+the completed lifecycle, report generation and existing reopen endpoint. Reports
+and graph snapshots carry the outcome so downstream consumers must preserve it.
 
 ### Fact
 

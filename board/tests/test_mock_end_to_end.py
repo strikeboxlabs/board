@@ -74,11 +74,11 @@ class InProcessClient:
     def claim_reason(self, project_id: str, worker: str, trigger: str) -> ApiResult:
         return self._post(f"/projects/{project_id}/reason/claim", {"worker": worker, "trigger": trigger})
 
-    def reason_heartbeat(self, project_id: str, worker: str) -> ApiResult:
-        return self._post(f"/projects/{project_id}/reason/heartbeat", {"worker": worker})
+    def reason_heartbeat(self, project_id: str, worker: str, lease_id: str | None = None) -> ApiResult:
+        return self._post(f"/projects/{project_id}/reason/heartbeat", {"worker": worker, "lease_id": lease_id})
 
-    def release_reason(self, project_id: str, worker: str) -> ApiResult:
-        return self._post(f"/projects/{project_id}/reason/release", {"worker": worker})
+    def release_reason(self, project_id: str, worker: str, lease_id: str | None = None) -> ApiResult:
+        return self._post(f"/projects/{project_id}/reason/release", {"worker": worker, "lease_id": lease_id})
 
     def release(self, project_id: str, intent_id: str, worker: str) -> ApiResult:
         return self._post(f"/projects/{project_id}/intents/{intent_id}/release", {"worker": worker})
@@ -321,7 +321,8 @@ def _loop(config: DispatchConfig, client: InProcessClient, containers: LocalCont
     loop._log_state = {}
     loop._cleanup_pending = set()
     loop._inactive_cleanup_done = {}
-    loop._abort_reports_done = set()
+    loop._terminal_reports_done = set()
+    loop._terminal_report_keys = {}
     loop.project_cursor = 0
     return loop
 
@@ -588,7 +589,8 @@ def test_unhealthy_worker_fails_over_to_healthy_worker(http_client: TestClient) 
     assert any(intent.worker == "good" for intent in project.intents)
 
 
-def test_aborted_project_gets_full_report_set_persisted(http_client: TestClient) -> None:
+@pytest.mark.parametrize("outcome", ["aborted", "current_results"])
+def test_terminal_project_gets_full_report_set_persisted(http_client: TestClient, outcome) -> None:
     # The dispatcher notices the terminal 'aborted' status on its next poll and
     # writes the full report set — abandoning a run must not lose its record.
     client = InProcessClient(http_client)
@@ -603,14 +605,20 @@ def test_aborted_project_gets_full_report_set_persisted(http_client: TestClient)
         containers,
     )
     project_id = _create_project(http_client)
-    response = http_client.post(
-        f"/projects/{project_id}/abort",
-        json={"reason": "foreign-tenant account unobtainable", "actor": "F"},
-    )
+    if outcome == "aborted":
+        response = http_client.post(
+            f"/projects/{project_id}/abort",
+            json={"reason": "foreign-tenant account unobtainable", "actor": "F"},
+        )
+    else:
+        response = http_client.post(f"/projects/{project_id}/complete", json={
+            "from": ["origin"], "description": "Coverage gaps remain", "worker": "F", "outcome": outcome})
     assert response.status_code == 200
 
     try:
-        loop._persist_aborted_reports(client.list_projects())
+        loop._persist_terminal_reports(client.list_projects())
+        for future in loop.cleanup_futures:
+            future.result(timeout=10)
         loop._reap_cleanup_futures()
     finally:
         loop.close()
@@ -627,10 +635,19 @@ def test_aborted_project_gets_full_report_set_persisted(http_client: TestClient)
         "timeline.txt",
     ]
     agent = json.loads((reports_dir / "report-agent.json").read_text())
-    assert agent["header"]["status"] == "aborted"
-    assert agent["header"]["abort_reason"] == "foreign-tenant account unobtainable"
-    assert "PROJECT ABORTED by F" in (reports_dir / "timeline.txt").read_text()
-    assert "**Outcome.**" in (reports_dir / "report-human.md").read_text()
+    if outcome == "aborted":
+        assert agent["header"]["status"] == "aborted"
+        assert agent["header"]["abort_reason"] == "foreign-tenant account unobtainable"
+        assert "PROJECT ABORTED by F" in (reports_dir / "timeline.txt").read_text()
+        assert "**Outcome.**" in (reports_dir / "report-human.md").read_text()
+    else:
+        assert agent["header"]["completion_outcome"] == "current_results"
+        assert "original goal is not asserted to have been achieved" in (reports_dir / "report-human.md").read_text()
+        assert "PROJECT CONCLUDED WITH CURRENT RESULTS" in (reports_dir / "timeline.txt").read_text()
+        assert "completion_outcome: current_results" in (reports_dir / "graph.yaml").read_text()
+        assert json.loads((reports_dir / "asset-map.json").read_text())["project"]["completion_outcome"] == "current_results"
+        assert "original goal is not asserted to have been achieved" in (reports_dir / "asset-inventory.md").read_text()
+        assert "original goal not asserted achieved" in (reports_dir / "asset-map.html").read_text()
 
     # persistence is submitted once per project, not every poll
     loop2 = _loop(
@@ -643,10 +660,60 @@ def test_aborted_project_gets_full_report_set_persisted(http_client: TestClient)
         containers,
     )
     try:
-        loop2._abort_reports_done = set(loop._abort_reports_done)
+        loop2._terminal_reports_done = set(loop._terminal_reports_done)
         before = (reports_dir / "timeline.txt").stat().st_mtime_ns
-        loop2._persist_aborted_reports(client.list_projects())
+        loop2._persist_terminal_reports(client.list_projects())
         loop2._reap_cleanup_futures()
     finally:
         loop2.close()
     assert (reports_dir / "timeline.txt").stat().st_mtime_ns == before
+
+
+def test_terminal_reports_refresh_after_reopen_and_reconclude(http_client):
+    client = InProcessClient(http_client)
+    containers = LocalContainerManager()
+    loop = _loop(_config(bootstrap=_phase("complete"), reason=_phase("complete", zero_outcomes=["intent"]), explore=_phase("fact")), client, containers)
+    pid = _create_project(http_client)
+    try:
+        for generation, outcome in enumerate(("current_results", "goal_met")):
+            assert http_client.post(f"/projects/{pid}/complete", json={"from":["origin"], "description":f"Conclusion {generation}", "worker":"human", "outcome":outcome}).status_code == 200
+            loop._persist_terminal_reports(client.list_projects())
+            for future in loop.cleanup_futures:
+                future.result(timeout=10)
+            loop._reap_cleanup_futures()
+            report = json.loads((containers.root / pid / "reports/report-agent.json").read_text())
+            assert report["header"]["completion_outcome"] == outcome
+            if generation == 0:
+                assert http_client.post(f"/projects/{pid}/reopen", json={"description":"New evidence", "creator":"human"}).status_code == 200
+    finally:
+        loop.close()
+
+
+def test_failed_terminal_report_write_retries_before_completed_cleanup(http_client, monkeypatch):
+    client = InProcessClient(http_client)
+    containers = LocalContainerManager()
+    loop = _loop(_config(bootstrap=_phase("complete"), reason=_phase("complete", zero_outcomes=["intent"]), explore=_phase("fact")), client, containers)
+    pid = _create_project(http_client)
+    assert http_client.post(f"/projects/{pid}/complete", json={"from":["origin"], "description":"Concluded", "worker":"human", "outcome":"current_results"}).status_code == 200
+    attempts = []
+    cleanups = []
+    monkeypatch.setattr("board.dispatcher.scheduler.loop.persist_project_reports", lambda *_: attempts.append(True) or len(attempts) > 1)
+    monkeypatch.setattr(containers, "needs_completed_cleanup", lambda *_: True)
+    monkeypatch.setattr(containers, "cleanup_completed", lambda *_: cleanups.append(True) or True, raising=False)
+    summaries = client.list_projects()
+    try:
+        for attempt in (1, 2):
+            loop._cleanup_completed_containers(summaries)
+            assert cleanups == []
+            loop._persist_terminal_reports(summaries)
+            for future in loop.cleanup_futures:
+                future.result(timeout=10)
+            loop._reap_cleanup_futures()
+            assert len(attempts) == attempt
+        loop._cleanup_completed_containers(summaries)
+        for future in loop.cleanup_futures:
+            future.result(timeout=10)
+        loop._reap_cleanup_futures()
+        assert cleanups == [True]
+    finally:
+        loop.close()

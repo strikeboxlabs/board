@@ -351,6 +351,9 @@
               </button>
             </div>
             <div class="mt-2 flex flex-wrap items-center gap-1.5">
+              <template x-if="p.status === 'active' && p.planner_wait && !p.reason">
+                <p class="text-xs text-amber-700 whitespace-pre-wrap break-words line-clamp-4" x-text="p.planner_wait.reason"></p>
+              </template>
               <template x-if="p.reason">
                 <div class="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-2 py-1 text-[10px] font-medium text-sky-700 reason-chip-running">
                   <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 3v3"/><path d="M18.364 5.636 16.95 7.05"/><path d="M21 12h-3"/><path d="m18.364 18.364-1.414-1.414"/><path d="M12 21v-3"/><path d="m7.05 16.95-1.414 1.414"/><path d="M6 12H3"/><path d="M7.05 7.05 5.636 5.636"/><circle cx="12" cy="12" r="3.5"/></svg>
@@ -559,12 +562,26 @@
   <section class="ooda-strip" aria-label="OODA activity overview">
     <div class="ooda-label"><strong>OODA / CONTROL</strong><span x-text="activityLabel()"></span></div>
     <div class="ooda-phase"><div class="phase-name"><b>01</b>Observe</div><p><span x-text="operationCounts().facts"></span> discoveries</p></div>
-    <div class="ooda-phase" :class="{ 'is-busy': project.project.status === 'active' && project.project.reason }"><div class="phase-name"><b>02</b>Orient</div><p :title="project.project.reason?.worker || ''" x-text="project.project.reason ? project.project.reason.worker : 'Reasoner idle'"></p></div>
+    <div class="ooda-phase" :class="{ 'is-busy': project.project.status === 'active' && project.project.reason }"><div class="phase-name"><b>02</b>Orient</div><p :title="project.project.reason?.worker || ''" x-text="project.project.reason ? project.project.reason.worker : project.project.planner_wait ? 'Waiting for a decision' : 'Reasoner idle'"></p></div>
     <div class="ooda-phase"><div class="phase-name"><b>03</b>Decide</div><p><span x-text="operationCounts().queued"></span> unclaimed intents</p></div>
     <div class="ooda-phase" :class="{ 'is-busy': project.project.status === 'active' && operationCounts().running > 0 }"><div class="phase-name"><b>04</b>Act</div><p><span x-text="operationCounts().running"></span> working / <span x-text="operationCounts().concluded"></span> concluded</p></div>
   </section>
 
   <div x-show="!replay.active && project.project.status === 'stopped'" class="shrink-0 px-4 py-2 border-b border-amber-200 text-xs text-amber-600" role="status" x-text="suspensionMessage()"></div>
+  <section x-show="!replay.active && project.project.status === 'active' && project.project.planner_wait && !project.project.reason"
+    class="shrink-0 px-4 py-3 border-b border-amber-200 bg-amber-50 text-amber-900" role="status" aria-live="polite">
+    <p class="text-sm font-semibold">Planner is waiting</p>
+    <p class="text-xs mt-1 whitespace-pre-wrap break-words max-h-40 overflow-y-auto" x-text="project.project.planner_wait?.reason || ''"></p>
+    <p class="text-xs mt-1" x-text="project.project.planner_wait?.since ? 'Since ' + new Date(project.project.planner_wait.since).toLocaleString() : ''"></p>
+    <p class="text-xs mt-1" x-text="(project.intents || []).some(i => !i.to && !i.excluded) || (project.jobs || []).some(j => j.status === 'running') ? 'New results or guidance will trigger another planning decision. Other workers may still be running.' : 'Add guidance to request another planning decision, or conclude with the current results.'"></p>
+    <div class="flex flex-wrap gap-2 mt-2">
+      <button type="button" @click="openHintModal()" class="px-3 py-1.5 rounded-lg border border-amber-300 bg-white text-xs font-medium">Give guidance</button>
+      <button type="button" @click="openConcludeCurrentResults()" :disabled="!canConcludeCurrentResults()"
+        title="Available when all intents have finished and background jobs are confirmed stopped."
+        class="px-3 py-1.5 rounded-lg border border-teal-300 bg-white text-xs font-medium disabled:opacity-40">Conclude with current results</button>
+    </div>
+  </section>
+  <p x-show="!replay.active && project.project.completion_outcome === 'current_results'" class="shrink-0 px-4 py-2 border-b border-slate-200 text-xs text-slate-600" role="status">Assessment concluded with current results. The original goal is not asserted to have been achieved. Findings and coverage gaps remain in the reports.</p>
   <div class="flex-1 flex overflow-hidden" id="graphLayout">
     <!-- Graph -->
     <div class="graph-workspace flex-1 relative min-w-0">
@@ -849,7 +866,7 @@
                     <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Role</span><span class="text-slate-600 text-right break-words">Project target fact</span></div>
                     <template x-if="selectedFactProducingIntent()">
                       <div class="pt-1 space-y-3">
-                        <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Completed By</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().id"></span></div>
+                        <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0" x-text="project.project.completion_outcome === 'current_results' ? 'Concluded By (goal unproven)' : 'Completed By'"></span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().id"></span></div>
                         <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Worker</span><span class="text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().worker || '—'"></span></div>
                         <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Concluded</span><span class="text-slate-600 text-right break-words" x-text="formatTime(selectedFactProducingIntent().concluded_at || selectedFactProducingIntent().created_at)"></span></div>
                       </div>
@@ -1209,8 +1226,8 @@
 <!-- Complete Project -->
 <div x-show="showCompleteModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showCompleteModal = false">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
-    <h3 class="text-base font-semibold text-slate-700 mb-1">Complete Project</h3>
-    <p class="text-xs text-slate-400 mb-4">Mark project as completed</p>
+    <h3 class="text-base font-semibold text-slate-700 mb-1" x-text="completeForm.outcome === 'current_results' ? 'Conclude with current results' : 'Complete Project'"></h3>
+    <p class="text-xs text-slate-400 mb-4" x-text="completeForm.outcome === 'current_results' ? 'End scheduling and preserve the findings, unresolved questions, and coverage gaps. This does not assert that the original goal was achieved. Reports remain available and the project can be reopened.' : 'Mark project as completed'"></p>
     <div class="space-y-3">
       <div>
         <label class="text-[11px] text-slate-400 mb-1 block font-medium">From facts</label>
@@ -1220,7 +1237,7 @@
           </template>
         </div>
       </div>
-      <textarea x-model="completeForm.description" placeholder="Why is the goal met?" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+      <textarea x-model="completeForm.description" :placeholder="completeForm.outcome === 'current_results' ? 'Record the conclusion and any unresolved limitations' : 'Why is the goal met?'" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
       <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
         Actor: <span class="font-medium text-slate-700" x-text="actorName()"></span>
       </div>
@@ -1228,7 +1245,7 @@
     <div class="flex justify-end gap-2 mt-5">
       <button @click="showCompleteModal = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">Cancel</button>
       <button @click="completeProject()" :disabled="selectedFacts.length === 0 || !completeForm.description"
-        class="px-5 py-2 text-sm bg-teal-500 text-white rounded-xl font-medium hover:bg-teal-600 transition disabled:opacity-30 shadow-sm shadow-teal-200">Complete</button>
+        class="px-5 py-2 text-sm bg-teal-500 text-white rounded-xl font-medium hover:bg-teal-600 transition disabled:opacity-30 shadow-sm shadow-teal-200" x-text="completeForm.outcome === 'current_results' ? 'Conclude assessment' : 'Complete'"></button>
     </div>
   </div>
 </div>
@@ -1236,7 +1253,8 @@
 <!-- Hint -->
 <div x-show="showHintModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showHintModal = false">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
-    <h3 class="text-base font-semibold text-slate-700 mb-4">Add Hint</h3>
+    <h3 class="text-base font-semibold text-slate-700 mb-2">Give guidance</h3>
+    <p class="text-xs text-slate-500 mb-4">Add instructions, missing context, or a scope decision. For an active project, new guidance prompts another planning decision.</p>
     <div class="space-y-3">
       <textarea x-model="hintForm.content" placeholder="Strategy advice or note..." rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
       <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
@@ -1506,7 +1524,7 @@ function boardApp() {
     intentForm: { description: '', assigned_worker_type: '', skill_profiles: '' },
     intentEdit: { open: false, priority: 50, assigned_worker: '', assigned_worker_type: '', skill_profiles: '' },
     concludeForm: { description: '', intentId: '' },
-    completeForm: { description: '' },
+    completeForm: { description: '', outcome: 'goal_met' },
     hintForm: { content: '' },
     reopenForm: { projectId: '', projectTitle: '', description: '' },
     renameForm: { projectId: '', originalTitle: '', title: '' },
@@ -2251,6 +2269,8 @@ function boardApp() {
           ...this.cloneData(sourceProject.project),
           status: 'active',
           reason: null,
+          planner_wait: null,
+          completion_outcome: null,
         },
         facts: [origin, goal].filter(Boolean).map(fact => this.cloneData(fact)),
         intents: [],
@@ -2392,6 +2412,7 @@ function boardApp() {
 
       if (event.type === 'project_completed') {
         replayProject.project.status = 'completed';
+        replayProject.project.completion_outcome = sourceProject.project.completion_outcome;
         return;
       }
 
@@ -2655,7 +2676,8 @@ function boardApp() {
         const lbl = intent.description;
         if (intent.to) {
           for (const src of intent.from) {
-            edges.push({ data: { id: `${intent.id}_${src}`, source: src, target: intent.to, intentId: intent.id, label: lbl, status: 'concluded' }});
+            const bounded = intent.to === 'goal' && this.project.project.completion_outcome === 'current_results';
+            edges.push({ data: { id: `${intent.id}_${src}`, source: src, target: intent.to, intentId: intent.id, label: bounded ? 'Concluded; goal unproven' : lbl, status: bounded ? 'current_results' : 'concluded' }});
           }
         } else {
           const phId = `_ph_${intent.id}`;
@@ -2718,6 +2740,7 @@ function boardApp() {
         { selector: 'node[nodeType="bootstrap_running"]', style: { ...common, shape:'round-rectangle','background-color':'#70552a','background-opacity':0.96,label:'data(label)',color:'#1c2119','font-size':'10px','font-weight':'bold',width:'data(width)',height:'data(height)','border-width':2,'border-color':'#ffc766','text-wrap':'wrap','text-max-width':'70px' }},
 
         { selector: 'edge[status="concluded"]', style: { width:2,'line-color':'#70aa69','target-arrow-color':'#70aa69','target-arrow-shape':'triangle','curve-style':'bezier',label:'data(label)','font-size':'7px',color:'#9ab5a7','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'80px','text-wrap':'ellipsis','text-background-color':'#0a1113','text-background-opacity':0.85,'text-background-padding':'2px','text-events':'yes','arrow-scale':0.9 }},
+        { selector: 'edge[status="current_results"]', style: { width:1.5,'line-color':'#9ab5a7','line-style':'dotted','target-arrow-shape':'none','curve-style':'bezier',label:'data(label)','font-size':'8px',color:'#bfe7f7','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'100px','text-wrap':'wrap','text-background-color':'#0a1113','text-background-opacity':0.85,'text-background-padding':'2px','text-events':'yes' }},
         { selector: 'edge[status="in_progress"]', style: { width:2,'line-color':'#ffc766','line-style':'dashed','line-dash-pattern':[8,4],'line-dash-offset':0,'target-arrow-color':'#ffc766','target-arrow-shape':'triangle','curve-style':'bezier',label:'data(label)','font-size':'7px',color:'#e4be7a','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'80px','text-wrap':'ellipsis','text-background-color':'#0a1113','text-background-opacity':0.85,'text-background-padding':'2px','text-events':'yes','arrow-scale':0.9 }},
         { selector: 'edge[status="unclaimed"]', style: { width:1.5,'line-color':'#526b66','line-style':'dashed','line-dash-pattern':[5,5],'target-arrow-color':'#526b66','target-arrow-shape':'triangle','curve-style':'bezier',label:'data(label)','font-size':'7px',color:'#9ab5a7','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'80px','text-wrap':'ellipsis','text-background-color':'#0a1113','text-background-opacity':0.85,'text-background-padding':'2px','text-events':'yes','arrow-scale':0.7 }},
         { selector: 'edge[status="bootstrap_pending"]', style: { width:2,'line-color':'#b89453','line-style':'dashed','line-dash-pattern':[8,4],'line-dash-offset':0,'target-arrow-color':'#b89453','target-arrow-shape':'triangle','curve-style':'bezier',label:'data(label)','font-size':'7px',color:'#e8c482','text-rotation':'autorotate','text-margin-y':-9,'text-max-width':'88px','text-wrap':'ellipsis','text-background-color':'#1c2119','text-background-opacity':0.92,'text-background-padding':'2px','text-events':'yes','arrow-scale':0.85 }},
@@ -2977,7 +3000,7 @@ function boardApp() {
 
     summarizeFactLabel(fact) {
       if (fact.id === 'origin') return 'Origin';
-      if (fact.id === 'goal') return 'Goal';
+      if (fact.id === 'goal') return this.project.project.completion_outcome === 'current_results' ? 'Goal (unproven)' : 'Goal';
       const normalized = fact.description.replace(/\s+/g, ' ').trim();
       const chars = Array.from(normalized);
       if (chars.length <= 24) return normalized || fact.id;
@@ -3651,6 +3674,7 @@ function boardApp() {
     },
 
     timelineEventBadge(entry) {
+      if (entry.type === 'project_completed' && this.project?.project?.completion_outcome === 'current_results') return 'Conclude';
       const labels = {
         project_created: 'Project',
         hint_added: 'Hint',
@@ -4004,7 +4028,20 @@ function boardApp() {
 
     openCompleteProject() {
       if (!this.canActOnSelectedFacts()) return;
-      this.completeForm = { description:'' };
+      this.completeForm = { description:'', outcome: 'goal_met' };
+      this.showCompleteModal = true;
+    },
+
+    canConcludeCurrentResults() {
+      return this.projectIsActive() && !this.project.project.reason
+        && !(this.project.intents || []).some(i => !i.to && !i.excluded)
+        && !(this.project.jobs || []).some(j => j.status === 'running' || ['pending', 'manual', 'failed'].includes(j.stop_state));
+    },
+
+    openConcludeCurrentResults() {
+      if (!this.canConcludeCurrentResults()) return;
+      this.selectedFacts = this.project.facts.filter(f => f.id !== 'goal').map(f => f.id);
+      this.completeForm = { outcome: 'current_results', description: 'Assessment concluded using the current evidence. The original goal is not asserted to have been achieved; unresolved questions and coverage gaps remain.' };
       this.showCompleteModal = true;
     },
 
@@ -4017,12 +4054,12 @@ function boardApp() {
     async completeProject() {
       try {
         const actor = this.actorName();
-        await this.api('POST', `/projects/${this.selectedProjectId}/complete`, { from: this.selectedFacts, description: this.completeForm.description, worker: actor });
+        await this.api('POST', `/projects/${this.selectedProjectId}/complete`, { from: this.selectedFacts, description: this.completeForm.description, worker: actor, outcome: this.completeForm.outcome || 'goal_met' });
         this.showCompleteModal = false;
         await this.loadProjects();
         await this.loadProject(this.selectedProjectId);
         this.updateGraph();
-        this.showToast('Project completed');
+        this.showToast(this.completeForm.outcome === 'current_results' ? 'Assessment concluded' : 'Project completed');
       } catch(e) { this.showToast(e.message, 'error'); }
     },
 

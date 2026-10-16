@@ -126,19 +126,25 @@ class BoardClient:
             json={"worker": worker, "trigger": trigger},
         )
 
-    def reason_heartbeat(self, project_id: str, worker: str) -> ApiResult:
+    def reason_heartbeat(self, project_id: str, worker: str, lease_id: str | None = None) -> ApiResult:
         return self._request_json(
             "POST",
             f"/projects/{project_id}/reason/heartbeat",
-            json={"worker": worker},
+            json={"worker": worker, **({"lease_id": lease_id} if lease_id is not None else {})},
         )
 
-    def release_reason(self, project_id: str, worker: str) -> ApiResult:
+    def release_reason(self, project_id: str, worker: str, lease_id: str | None = None) -> ApiResult:
         return self._request_json(
             "POST",
             f"/projects/{project_id}/reason/release",
-            json={"worker": worker},
+            json={"worker": worker, **({"lease_id": lease_id} if lease_id is not None else {})},
         )
+
+    def record_reason_wait(self, project_id: str, worker: str, lease_id: str,
+                           reason: str, input_signature: str) -> ApiResult:
+        return self._request_json("POST", f"/projects/{project_id}/reason/wait",
+                                  json={"worker": worker, "lease_id": lease_id,
+                                        "reason": reason, "input_signature": input_signature})
 
     def release(self, project_id: str, intent_id: str, worker: str) -> ApiResult:
         return self._request_json(

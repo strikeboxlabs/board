@@ -8,6 +8,7 @@ Facts are confirmed results; intents are work; hints are user guidance. Check wh
   {"accepted":true,"data":{"intents":[{"from":["f001"],"description":"one focused next step","priority":70}]}}
 - Capacity is a ceiling, not a quota. Return fewer or none when additional work would be redundant, speculative, or depend on pending results.
 - To wait, including when no intents are open: {"accepted":true,"data":{"wait":"specific dependency, missing information, or why no worthwhile next step exists"}}
+- A wait explanation is shown to the operator. In at most three sentences, explain the blocker or remaining uncertainty and suggest a concrete next action (supply specific information, choose a scope change, or conclude with current results). If other work is pending, say which result is awaited.
 - Never claim completion merely because work is blocked or no promising direction remains.
 - Keep each intent description to at most three sentences. Cite existing fact IDs. Do not repeat closed investigations without new evidence.
 - Respect open intents, including assigned_worker pins and assigned_worker_type constraints. Never set either routing field; these are human choices.

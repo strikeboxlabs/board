@@ -76,6 +76,7 @@ def build_agent_report(
             "project_id": project_id,
             "title": data.project["title"],
             "status": data.project["status"],
+            "completion_outcome": _column(data.project, "completion_outcome"),
             "abort_reason": _column(data.project, "abort_reason"),
             "aborted_at": _column(data.project, "aborted_at"),
             "aborted_by": _column(data.project, "aborted_by"),
@@ -117,6 +118,8 @@ def render_agent_report_markdown(report: dict) -> str:
     lines.append("Machine-readable report generated from the Strikebox blackboard. The JSON block below is the complete structured payload; the prose sections after it are convenience renderings of the same data.")
     lines.append("")
     lines.append(f"- Project: `{header['project_id']}` ({header['status']})")
+    if header.get("completion_outcome") == "current_results":
+        lines.append("- Outcome: concluded with current results; the original goal is not asserted to have been achieved.")
     lines.append(f"- Goal: {header['goal']}")
     lines.append(f"- Time window: {header['time_window']['start']} → {header['time_window']['end']}")
     lines.append(f"- Generated: {header['generated_at']} by Strikebox {header['board_version']}")

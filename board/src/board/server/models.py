@@ -224,6 +224,28 @@ class ProjectReason(BaseModel):
     trigger: str
     started_at: str
     last_heartbeat_at: str
+    lease_id: str | None = None
+
+
+class PlannerWait(BaseModel):
+    reason: str
+    since: str
+    worker: str
+    input_signature: str
+
+
+class ReasonWaitRequest(BaseModel):
+    worker: str = Field(min_length=1)
+    lease_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1, max_length=12000)
+    input_signature: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @field_validator("worker", "lease_id", "reason")
+    @classmethod
+    def validate_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be empty")
+        return value.strip()
 
 
 ProjectStatus = Literal["active", "stopped", "completed", "aborted"]
@@ -242,6 +264,8 @@ class ProjectMeta(BaseModel):
     suspension_id: str | None = None
     suspension_ack_id: str | None = None
     execution_notes: str = ""
+    planner_wait: PlannerWait | None = None
+    completion_outcome: Literal["goal_met", "current_results"] | None = None
 
 
 class ProjectSummary(ProjectMeta):
@@ -354,6 +378,10 @@ class HeartbeatRequest(BaseModel):
         return text
 
 
+class ReasonHeartbeatRequest(HeartbeatRequest):
+    lease_id: str | None = None
+
+
 class ReasonClaimRequest(BaseModel):
     worker: str
     trigger: str
@@ -384,6 +412,7 @@ class CompleteRequest(BaseModel):
     from_: list[str] = Field(alias="from", min_length=1)
     description: str
     worker: str
+    outcome: Literal["goal_met", "current_results"] = "goal_met"
 
     model_config = {"populate_by_name": True}
 

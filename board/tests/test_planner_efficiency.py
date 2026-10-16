@@ -118,6 +118,9 @@ def test_pi_reason_is_tool_free_file_attachment(monkeypatch):
     backend = FakeContainerManager()
     driver = PiDriver(local=True)
     client = FakeClient(make_project())
+    from board.server.models import ProjectReason
+    client.project.project.reason = ProjectReason(worker=config.workers[0].name, trigger='test',
+        started_at='2026-01-01T00:00:00Z', last_heartbeat_at='2026-01-01T00:00:00Z', lease_id='test-lease')
     monkeypatch.setattr(reason, 'get_driver', lambda *_: driver)
     monkeypatch.setattr(reason.HeartbeatLease, 'for_reason', lambda *_: FakeLease())
     commands = []
@@ -127,6 +130,7 @@ def test_pi_reason_is_tool_free_file_attachment(monkeypatch):
     monkeypatch.setattr(reason, 'run_worker_process', run)
     result = reason.run_reason_task(config, client, backend, client.project, 'the whole graph', config.workers[0], TaskCancellation())
     assert result == 'success'
+    assert client.planner_waits[0][2:4] == ('test-lease', 'No independent work yet')
     assert '--no-tools' in commands[0]
     assert '--tools' not in commands[0]
     assert commands[0][-1].startswith('@')

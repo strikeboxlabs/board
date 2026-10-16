@@ -320,7 +320,9 @@ def render_asset_map_html(asset_map: dict) -> str:
     html = html.replace(
         "__META__",
         f"{project['id']} · {project['status']} · {summary['node_count']} assets · "
-        f"{summary['edge_count']} relations · generated from the Strikebox blackboard",
+        f"{summary['edge_count']} relations · generated from the Strikebox blackboard"
+        + (" · Concluded with current results; original goal not asserted achieved"
+           if project.get("completion_outcome") == "current_results" else ""),
     )
     for token, library in libraries.items():
         html = html.replace(token, library.replace("</script>", "<\\/script>"))

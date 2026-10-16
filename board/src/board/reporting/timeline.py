@@ -79,7 +79,9 @@ def render_timeline(conn: sqlite3.Connection, project_id: str) -> str:
         actor = i["worker"] or i["creator"]
 
         if i["to_fact_id"] == "goal":
-            block = f"[{ts}] PROJECT COMPLETED by {actor}\n  via: {i['id']} from {from_str}"
+            concluded = "completion_outcome" in data.project.keys() and data.project["completion_outcome"] == "current_results"
+            label = "PROJECT CONCLUDED WITH CURRENT RESULTS" if concluded else "PROJECT COMPLETED"
+            block = f"[{ts}] {label} by {actor}\n  via: {i['id']} from {from_str}\n  {i['description']}"
         else:
             fact_desc = facts_by_id.get(i["to_fact_id"], "")
             block = f"[{ts}] INTENT CONCLUDED {i['id']} by {actor}\n  from: {from_str}\n  produced: {i['to_fact_id']}\n  {fact_desc}"

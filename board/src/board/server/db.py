@@ -165,6 +165,7 @@ def configure(path: Path) -> None:
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}
             if column not in columns:
                 conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} TEXT")
+        _ensure_planner_wait_invalidation(conn)
         # Bring projects stopped by older clients under the same acknowledgement
         # barrier; their detached jobs must not survive a nominal suspension.
         conn.execute("""UPDATE projects SET suspension_id = lower(hex(randomblob(16))), suspension_ack_id = NULL
@@ -200,12 +201,40 @@ def _ensure_project_columns(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "UPDATE projects SET bootstrap_enabled = CASE WHEN bootstrap_mode = 'disabled' THEN 0 ELSE 1 END"
             )
-    for column in ("abort_reason", "aborted_at", "aborted_by", "suspension_id", "suspension_ack_id"):
+    for column in ("abort_reason", "aborted_at", "aborted_by", "suspension_id", "suspension_ack_id",
+                   "reason_lease_id", "planner_wait", "completion_outcome"):
         if column not in columns:
             conn.execute(f"ALTER TABLE projects ADD COLUMN {column} TEXT")
 
     if "execution_notes" not in columns:
         conn.execute("ALTER TABLE projects ADD COLUMN execution_notes TEXT NOT NULL DEFAULT ''")
+
+
+def _ensure_planner_wait_invalidation(conn: sqlite3.Connection) -> None:
+    """New evidence/work invalidates a decision; heartbeat-only updates do not."""
+    updates = {
+        "facts": "description",
+        "hints": "content",
+        "intents": "to_fact_id, description, priority, blocked_by, assigned_worker, assigned_worker_type, skill_profiles, excluded, dispatch_error, cancel_requested_at, cancelled_at",
+        "jobs": "status",
+    }
+    for table, columns in updates.items():
+        for event, reference in (("INSERT", "NEW"), ("DELETE", "OLD"), (f"UPDATE OF {columns}", "NEW")):
+            suffix = event.split()[0].lower()
+            predicate = " OR ".join(f"OLD.{column} IS NOT NEW.{column}" for column in columns.split(", "))
+            when = f"WHEN {predicate}" if suffix == "update" else ""
+            # Refresh existing definitions when upgrading an earlier install.
+            conn.execute(f"DROP TRIGGER IF EXISTS clear_planner_wait_{table}_{suffix}")
+            conn.execute(f"""CREATE TRIGGER clear_planner_wait_{table}_{suffix}
+                AFTER {event} ON {table} {when} BEGIN
+                UPDATE projects SET planner_wait = NULL WHERE id = {reference}.project_id;
+                END""")
+    conn.execute("DROP TRIGGER IF EXISTS clear_planner_wait_policy")
+    conn.execute("""CREATE TRIGGER clear_planner_wait_policy
+        AFTER UPDATE OF status, execution_notes ON projects
+        WHEN OLD.status IS NOT NEW.status OR OLD.execution_notes IS NOT NEW.execution_notes BEGIN
+        UPDATE projects SET planner_wait = NULL WHERE id = NEW.id;
+        END""")
 
 
 def _ensure_job_columns(conn: sqlite3.Connection) -> None:
