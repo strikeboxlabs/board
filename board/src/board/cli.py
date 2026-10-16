@@ -369,3 +369,97 @@ def efficiency(project_id: str, reports_root: Path | None):
     if not path.exists():
         raise click.ClickException(f"No efficiency measurements yet: {path}")
     click.echo(json.dumps(summarize(path), indent=2))
+
+
+
+def _skill_config_failure(exc: Exception) -> str:
+    """Never serialize configuration input values (provider credentials may be present)."""
+    import json
+    from pydantic import ValidationError
+    if isinstance(exc, ValidationError):
+        details = [{"location": list(error["loc"]), "message": error["msg"], "type": error["type"]}
+                   for error in exc.errors(include_input=False, include_context=False)]
+        return "Invalid dispatcher configuration: " + json.dumps(details)
+    return "Cannot validate dispatcher configuration (" + type(exc).__name__ + ")"
+
+@main.group("skills")
+def skills_commands():
+    """Inspect trusted skill catalogs and per-intent profiles without a model call."""
+
+
+@skills_commands.command("doctor")
+@click.option("--config", "config_path", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--json", "json_output", is_flag=True)
+def skills_doctor(config_path: Path, json_output: bool):
+    """Validate local catalog/profile/resource access as the current daemon user."""
+    import json
+    from board.dispatcher.config import DispatchConfig
+    from board.dispatcher.skills import doctor
+    try:
+        config = DispatchConfig.load(config_path)
+        result = doctor(config.skills)
+        if config.skills.enabled and config.runtime.execution != "local":
+            result["errors"].append("Catalog skill profiles currently require local execution")
+    except Exception as exc:
+        result = {"errors": [_skill_config_failure(exc)], "warnings": []}
+    if json_output:
+        click.echo(json.dumps(result, indent=2))
+    else:
+        click.echo("Skill configuration: " + ("FAILED" if result["errors"] else "OK"))
+        for item in result.get("profiles", []):
+            click.echo(f"{item['id']}: {item['skills']} skills, ~{item['estimated_metadata_tokens']} metadata tokens")
+        for item in result.get("warnings", []) + result["errors"]:
+            click.echo(item)
+    if result["errors"]:
+        raise click.exceptions.Exit(1)
+
+
+@skills_commands.command("profiles")
+@click.option("--config", "config_path", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--json", "json_output", is_flag=True)
+def skills_profiles(config_path: Path, json_output: bool):
+    """List available profile summaries and discovery cost estimates."""
+    import json
+    from board.dispatcher.config import DispatchConfig
+    from board.dispatcher.skills import doctor, profile_summaries
+    try:
+        config = DispatchConfig.load(config_path)
+        result = doctor(config.skills)
+        if result["errors"]:
+            raise ValueError("Invalid skill catalog or profile configuration; run skills doctor")
+        text = json.dumps(result["profiles"], indent=2) if json_output else profile_summaries(config.skills)
+    except Exception as exc:
+        raise click.ClickException(_skill_config_failure(exc)) from None
+    click.echo(text)
+
+
+@skills_commands.command("search")
+@click.argument("query")
+@click.option("--config", "config_path", required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--limit", default=20, type=click.IntRange(1, 100), show_default=True)
+@click.option("--json", "json_output", is_flag=True)
+def skills_search(query: str, config_path: Path, limit: int, json_output: bool):
+    """Search all catalog descriptions, including explicitly unreviewed classifications."""
+    import json
+    import re
+    from board.dispatcher.config import DispatchConfig
+    from board.dispatcher.skills import load_catalogs
+    try:
+        config = DispatchConfig.load(config_path)
+        catalog = load_catalogs(config.skills)
+        terms = set(re.findall(r"[a-z0-9]+", query.lower()))
+        matches = []
+        for identity, skill in catalog.items():
+            text = (identity + " " + skill.description + " " + " ".join(skill.tags)).lower()
+            score = sum(term in text for term in terms) + (4 if query.lower() == skill.name else 0)
+            if score:
+                matches.append((score, identity, {"id": identity, "description": skill.description,
+                    "tags": list(skill.tags), "requires": list(skill.requires)}))
+        result = [item[2] for item in sorted(matches, key=lambda item: (-item[0], item[1]))[:limit]]
+    except Exception as exc:
+        raise click.ClickException(_skill_config_failure(exc)) from None
+    if json_output:
+        click.echo(json.dumps(result, indent=2))
+    else:
+        for item in result:
+            click.echo(item["id"] + ": " + item["description"])

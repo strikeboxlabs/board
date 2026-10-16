@@ -178,6 +178,7 @@ class BoardClient:
         priority: int | None = None,
         blocked_by: str | None = None,
         assigned_worker_type: str | None = None,
+        skill_profiles: list[str] | None = None,
     ) -> ApiResult:
         payload: dict[str, Any] = {"from": from_ids, "description": description, "creator": creator, "worker": None}
         if priority is not None:
@@ -186,6 +187,8 @@ class BoardClient:
             payload["blocked_by"] = blocked_by
         if assigned_worker_type is not None:
             payload["assigned_worker_type"] = assigned_worker_type
+        if skill_profiles is not None:
+            payload["skill_profiles"] = skill_profiles
         return self._request_json(
             "POST",
             f"/projects/{project_id}/intents",

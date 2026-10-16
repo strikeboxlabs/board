@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from board.dispatcher.contracts import validate_reason_payload
+from board.dispatcher.config import LocalConfig
 from board.dispatcher.scheduler.reason_gate import ReasonGate, graph_signature
 from board.dispatcher.tasks import reason
 from board.dispatcher.runtime.process import ProcessResult
@@ -112,6 +113,7 @@ def test_capacity_rechecked_after_human_adds_intent(monkeypatch):
 def test_pi_reason_is_tool_free_file_attachment(monkeypatch):
     config = make_config()
     config.runtime.execution = 'local'
+    config.local = LocalConfig()
     config.workers[0].type = 'pi'
     backend = FakeContainerManager()
     driver = PiDriver(local=True)

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
+
+import yaml
 
 from board.dispatcher.protocol.client import ApiResult
 from board.dispatcher.runtime.cancellation import TaskCancellation
@@ -61,7 +64,8 @@ def test_reason_writes_graph_snapshot_and_creates_intent(monkeypatch) -> None:
     assert len(containers.writes) == 1
     container_name, path, content = containers.writes[0]
     assert container_name == "container-proj_001"
-    assert "/proj_001/scratch/graph-reason_execute-" in path
+    assert Path(path).parent == containers.root / "proj_001" / "scratch"
+    assert Path(path).name.startswith("graph-reason_execute-")
     assert path.endswith(".yaml")
     assert content == graph_yaml
     assert graph_yaml not in driver.execute_prompts[0]
@@ -100,9 +104,15 @@ def test_explore_early_plain_text_exit_uses_conclude_fallback(monkeypatch) -> No
 
     assert outcome == "success"
     assert client.concluded == [("proj_001", "i001", "test-worker", "confirmed fact")]
-    assert len(containers.writes) == 2
-    assert "graph-explore_execute-" in containers.writes[0][1]
-    assert "graph-explore_conclude-" in containers.writes[1][1]
+    assert len(containers.writes) == 4
+    for phase, prompt in (("explore_execute", driver.execute_prompts[0]), ("explore_conclude", driver.conclude_prompts[0])):
+        phase_writes = [(path, content) for _, path, content in containers.writes if f"graph-{phase}-" in Path(path).name]
+        assert len(phase_writes) == 2
+        full_path, full_content = next(item for item in phase_writes if not item[0].endswith("-focus.yaml"))
+        focus_path, focus_content = next(item for item in phase_writes if item[0].endswith("-focus.yaml"))
+        assert yaml.safe_load(full_content) == {"facts": [{"id": "f001"}]}
+        assert yaml.safe_load(focus_content)["context_view"]["source_fact_ids"] == ["f001"]
+        assert full_path in prompt and focus_path in prompt
     assert len(driver.execute_prompts) == 1
     assert len(driver.conclude_prompts) == 1
     assert lease.started and lease.stopped

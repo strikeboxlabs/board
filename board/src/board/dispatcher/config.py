@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
+
+from board.dispatcher.skills import SkillsConfig
+from board.skill_profiles import validate_skill_profile_ids
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
@@ -169,6 +172,7 @@ class LocalConfig(BaseModel):
     workspace_root: str | None = None
     evidence_root: str | None = None
     completed_action: LocalCompletedAction = "keep"
+    pi_session_storage: Literal["project", "ephemeral"] = "project"
 
 
 class RuntimeConfig(BaseModel):
@@ -191,6 +195,23 @@ class WorkerConfig(BaseModel):
     max_running: int = Field(gt=0)
     priority: int = Field(ge=0)
     env: dict[str, str] = Field(default_factory=dict)
+    skill_profiles: list[str] = Field(default_factory=list)
+    pi_extensions: list[str] = Field(default_factory=list)
+    pi_tools: list[str] = Field(default_factory=lambda: ["read", "write", "edit", "bash", "grep", "find", "ls"])
+
+    @field_validator("skill_profiles", mode="before")
+    @classmethod
+    def validate_profiles(cls, value):
+        return validate_skill_profile_ids(value)
+
+    @field_validator("pi_extensions", "pi_tools")
+    @classmethod
+    def validate_pi_resources(cls, value):
+        if any(not item.strip() or "\x00" in item or "\n" in item for item in value):
+            raise ValueError("Pi tools/extensions must be non-empty single-line strings")
+        if len(value) != len(set(value)):
+            raise ValueError("Pi tools/extensions must be unique")
+        return value
 
     @field_validator("task_types")
     @classmethod
@@ -206,6 +227,11 @@ class WorkerConfig(BaseModel):
         # Required LLM env keys (base_url / key / model) are enforced per execution mode by
         # DispatchConfig: container mode needs them, local mode reuses the host CLI config.
         # The checks below are mode-independent and always apply.
+        if self.type != "pi":
+            if self.skill_profiles:
+                raise ValueError("worker skill_profiles currently require type pi")
+            if self.pi_extensions or self.pi_tools != ["read", "write", "edit", "bash", "grep", "find", "ls"]:
+                raise ValueError("pi_extensions and custom pi_tools require type pi")
         if self.type == "pi":
             _validate_optional_positive_int_env(self.name, self.env, "PI_MODEL_CONTEXT_WINDOW")
         if self.type == "mock":
@@ -223,6 +249,7 @@ class DispatchConfig(BaseModel):
     local: LocalConfig | None = None
     common_env: dict[str, str] = Field(default_factory=dict)
     workers: list[WorkerConfig]
+    skills: SkillsConfig = Field(default_factory=SkillsConfig)
 
     @model_validator(mode="before")
     @classmethod
@@ -263,6 +290,13 @@ class DispatchConfig(BaseModel):
             raise ValueError("workers must not be empty")
         if self.runtime.max_project_workers > self.runtime.max_workers:
             raise ValueError("max_project_workers cannot exceed max_workers")
+        for worker in self.workers:
+            if worker.skill_profiles:
+                if not self.skills.enabled:
+                    raise ValueError(f"worker {worker.name} configures skill_profiles but skills.enabled is false")
+                if self.runtime.execution != "local":
+                    raise ValueError(f"worker {worker.name} skill_profiles require local execution")
+                self.skills.expanded_profiles(worker.skill_profiles, self.skills.all_profiles())
         return self
 
     @model_validator(mode="after")
@@ -290,6 +324,7 @@ class DispatchConfig(BaseModel):
     def load(cls, path: Path) -> "DispatchConfig":
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         config = cls.model_validate(data)
+        config.skills.catalogs = [str((path.resolve().parent / item).resolve()) if not Path(item).expanduser().is_absolute() else str(Path(item).expanduser()) for item in config.skills.catalogs]
         validate_prompt_resources(config.runtime.prompt_group)
         return config
 

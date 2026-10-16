@@ -527,10 +527,17 @@ def _pin_loop(workers: list) -> DispatcherLoop:
 
         def heartbeat(self, pid, iid, worker):
             claims.append((iid, worker))
+            intent = next(intent for intent in loop._pin_project.intents if intent.id == iid)
+            data = intent.model_copy(update={"worker": worker}).model_dump(by_alias=True)
+            return type("R", (), {"ok": True, "status_code": 200, "text": "", "data": data})()
+
+        def release(self, pid, iid, worker):
+            loop._released_claims.append((iid, worker))
             return type("R", (), {"ok": True, "status_code": 200, "text": ""})()
 
     loop.client = _ClaimClient()
     loop._claims = claims
+    loop._released_claims = []
     loop.executor = type(
         "Exec",
         (),

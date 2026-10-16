@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 
@@ -181,6 +182,7 @@ def intent_to_model(conn: sqlite3.Connection, row: sqlite3.Row, project_id: str)
         blocked_by=row["blocked_by"],
         assigned_worker=row["assigned_worker"],
         assigned_worker_type=row["assigned_worker_type"],
+        skill_profiles=json.loads(row["skill_profiles"]),
         dispatch_error=row["dispatch_error"],
         dispatch_error_at=row["dispatch_error_at"],
         dispatch_error_worker=row["dispatch_error_worker"],

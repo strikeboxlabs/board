@@ -53,6 +53,13 @@ class DispatcherLoop:
     def __init__(self, config_path: Path):
         self.config_path = config_path
         self.config = DispatchConfig.load(config_path)
+        if self.config.skills.enabled:
+            from board.dispatcher.skills import doctor
+            skill_report = doctor(self.config.skills)
+            if self.config.runtime.execution != "local":
+                skill_report["errors"].append("Catalog skill profiles require local execution")
+            if skill_report["errors"]:
+                raise RuntimeError("Skill configuration: " + "; ".join(skill_report["errors"]))
         self.client = BoardClient(self.config.server)
         if self.config.runtime.execution == "local":
             self.container_manager = LocalBackend(self.config.local or LocalConfig())
@@ -353,8 +360,9 @@ class DispatcherLoop:
                 if intent.blocked_by and intent.blocked_by in running_job_ids:
                     job_blocked += 1
                     continue
-                if (intent.assigned_worker or intent.assigned_worker_type) and not self._worker_available(
-                    summary.id, intent.assigned_worker, "explore", required_type=intent.assigned_worker_type
+                if (intent.assigned_worker or intent.assigned_worker_type or intent.skill_profiles) and not self._worker_available(
+                    summary.id, intent.assigned_worker, "explore",
+                    required_type="pi" if intent.skill_profiles else intent.assigned_worker_type
                 ):
                     pinned_waiting.append(intent.id)
                     continue
@@ -555,11 +563,15 @@ class DispatcherLoop:
         return True
 
     def _dispatch_explore(self, project: ProjectDetail, export_yaml: str, intent: Intent) -> bool:
+        routing_error = self._intent_routing_error(intent)
+        if routing_error:
+            self._halt_intent(project.project.id, intent.id, None, routing_error)
+            return False
         selection = self._select_worker(
             project.project.id,
             "explore",
             required_worker=intent.assigned_worker,
-            required_type=intent.assigned_worker_type,
+            required_type="pi" if intent.skill_profiles else intent.assigned_worker_type,
         )
         worker = selection.worker
         if worker is None:
@@ -596,6 +608,21 @@ class DispatcherLoop:
                 claim.status_code,
             )
             return False
+        try:
+            claimed_intent = Intent.model_validate(claim.data)
+        except Exception:
+            LOG.warning("explore claim returned an invalid intent project=%s intent=%s worker=%s",
+                        project.project.id, intent.id, worker.name)
+            self._best_effort_release(project.project.id, intent.id, worker.name)
+            return False
+        planned_requirements = (intent.skill_profiles, intent.assigned_worker, intent.assigned_worker_type)
+        claimed_requirements = (claimed_intent.skill_profiles, claimed_intent.assigned_worker, claimed_intent.assigned_worker_type)
+        if claimed_intent.id != intent.id or claimed_requirements != planned_requirements:
+            LOG.info("explore requirements changed before claim project=%s intent=%s worker=%s; deferring selection",
+                     project.project.id, intent.id, worker.name)
+            self._best_effort_release(project.project.id, intent.id, worker.name)
+            return False
+        intent = claimed_intent
         try:
             future = self.executor.submit(
                 run_explore_task,
@@ -1109,12 +1136,26 @@ class DispatcherLoop:
         return False
 
     def _intent_routing_error(self, intent):
-        if not intent.assigned_worker and not intent.assigned_worker_type:
+        if intent.skill_profiles:
+            if not self.config.skills.enabled:
+                return "Intent requests skill profiles, but skills.enabled is false. Dispatch is stopped."
+            if self.config.runtime.execution != "local":
+                return "Intent skill profiles currently require local execution. Dispatch is stopped."
+            try:
+                self.config.skills.expanded_profiles(intent.skill_profiles, self.config.skills.all_profiles())
+            except ValueError as exc:
+                return f"{exc}. Dispatch is stopped."
+            if intent.assigned_worker_type and intent.assigned_worker_type != "pi":
+                return "Intent skill profiles require Pi, conflicting with the human worker-type assignment. Dispatch is stopped."
+        if not intent.assigned_worker and not intent.assigned_worker_type and not intent.skill_profiles:
             return None
         matching = [w for w in self.config.workers if "explore" in w.task_types
                     and (not intent.assigned_worker or w.name == intent.assigned_worker)
-                    and (not intent.assigned_worker_type or w.type == intent.assigned_worker_type)]
+                    and (not intent.assigned_worker_type or w.type == intent.assigned_worker_type)
+                    and (not intent.skill_profiles or w.type == "pi")]
         if not matching:
+            if intent.skill_profiles:
+                return "No Pi execution worker matches this intent's skill profiles and human routing constraints. Dispatch is stopped."
             target = intent.assigned_worker or intent.assigned_worker_type
             return f"No execution worker is registered for '{target}' with the selected routing constraints. Dispatch is stopped."
         return None

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from board.skill_profiles import validate_skill_profile_ids
+
 from board.dispatcher.output_parser import extract_json_object
 
 ALLOWED_FINDING_SEVERITIES = frozenset({"critical", "high", "medium", "low", "info", "negative"})
@@ -175,6 +177,8 @@ def validate_reason_payload(
         for i, intent in enumerate(intents):
             if not isinstance(intent, dict) or "from" not in intent or "description" not in intent:
                 raise ValueError(f"invalid intent at index {i}")
+            if "skill_profiles" in intent:
+                validate_skill_profile_ids(intent["skill_profiles"])
             priority = intent.get("priority")
             if priority is not None and (not isinstance(priority, int) or isinstance(priority, bool) or not 1 <= priority <= 100):
                 raise ValueError(f"intent at index {i}: priority must be an integer between 1 and 100")

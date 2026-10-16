@@ -476,7 +476,9 @@ def test_ensure_running_seeds_agents_md_once(tmp_path) -> None:
     agents = tmp_path / "proj_001" / "workspace" / "AGENTS.md"
     assert agents.exists()
     content = agents.read_text()
-    assert "impacket-dpapi" in content
+    assert "# Board worker contract" in content
+    assert "BOARD_EVIDENCE_DIR" in content
+    assert "selected skills provide" in content
 
     # human edits are preserved: never overwritten once present
     agents.write_text("# custom runbook\n")

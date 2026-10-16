@@ -155,3 +155,120 @@ def test_existing_database_migrates_without_changing_old_intents(tmp_path, monke
         assert row["description"] == "Existing work"
         assert row["assigned_worker"] == "local-pi"
         assert row["assigned_worker_type"] is None
+
+
+def profile_loop(*, configured=None, other=False):
+    configured = workers() if configured is None else configured
+    configured = [w.model_copy(update={"priority": 99 if w.type == "pi" else w.priority}) for w in configured]
+    loop = setup_loop(None, configured=configured, other=other)
+    loop.config.runtime.execution = "local"
+    loop.config.skills.enabled = True
+    loop._pin_project.intents[0].skill_profiles = ["source-review"]
+    loop._profile_failures = []
+    def fail_intent(pid, iid, worker, error):
+        loop._profile_failures.append((iid, worker, error))
+        return type("Result", (), {"ok": True, "status_code": 200})()
+    loop.client.fail_intent = fail_intent
+    return loop
+
+
+def test_profile_request_selects_pi_even_when_other_worker_has_higher_priority():
+    loop = profile_loop()
+    assert loop._try_dispatch_project(_summary("proj_001"))
+    assert loop._claims == [("i001", "local-pi")]
+    assert loop._pin_project.intents[0].assigned_worker is None
+    assert loop._pin_project.intents[0].assigned_worker_type is None
+    assert loop._profile_failures == []
+
+
+def test_profile_request_respects_explicit_pi_worker_pin():
+    loop = profile_loop()
+    loop._pin_project.intents[0].assigned_worker = "local-pi"
+    assert loop._try_dispatch_project(_summary("proj_001"))
+    assert loop._claims == [("i001", "local-pi")]
+    assert loop._pin_project.intents[0].assigned_worker == "local-pi"
+
+
+def test_busy_profile_worker_does_not_block_an_unrelated_intent():
+    loop = profile_loop(other=True)
+    loop.futures[Future()] = RunningTask("other-project", "explore", "local-pi", TaskCancellation())
+    assert loop._try_dispatch_project(_summary("proj_001"))
+    assert loop._claims == [("i002", "local-codex")]
+    assert loop._profile_failures == []
+
+
+def test_busy_profile_worker_waits_without_rerouting_or_failing():
+    loop = profile_loop()
+    loop.futures[Future()] = RunningTask("other-project", "explore", "local-pi", TaskCancellation())
+    assert not loop._try_dispatch_project(_summary("proj_001"))
+    assert loop._claims == []
+    assert loop._profile_failures == []
+
+
+@pytest.mark.parametrize("incompatibility, expected", [
+    ("disabled", "skills.enabled is false"),
+    ("unknown", "Unknown skill profile"),
+    ("nonlocal", "require local execution"),
+    ("no-pi", "No Pi execution worker"),
+    ("worker-pin", "human routing constraints"),
+    ("type-pin", "human worker-type assignment"),
+])
+def test_incompatible_profile_request_halts_clearly_without_changing_human_routing(incompatibility, expected):
+    loop = profile_loop()
+    intent = loop._pin_project.intents[0]
+    if incompatibility == "disabled":
+        loop.config.skills.enabled = False
+    elif incompatibility == "unknown":
+        intent.skill_profiles = ["unknown-profile"]
+    elif incompatibility == "nonlocal":
+        loop.config.runtime.execution = "container"
+    elif incompatibility == "no-pi":
+        loop.config.workers = [w for w in loop.config.workers if w.type != "pi"]
+    elif incompatibility == "worker-pin":
+        intent.assigned_worker = "local-codex"
+    elif incompatibility == "type-pin":
+        intent.assigned_worker_type = "codex"
+    human_routing = (intent.assigned_worker, intent.assigned_worker_type)
+    assert not loop._try_dispatch_project(_summary("proj_001"))
+    assert loop._claims == []
+    assert len(loop._profile_failures) == 1
+    iid, worker, error = loop._profile_failures[0]
+    assert iid == "i001" and worker is None
+    assert expected in error and "Dispatch is stopped" in error
+    assert (intent.assigned_worker, intent.assigned_worker_type) == human_routing
+
+
+def test_direct_explore_dispatch_cannot_bypass_profile_compatibility():
+    loop = profile_loop()
+    loop._pin_project.intents[0].assigned_worker_type = "codex"
+    assert not loop._dispatch_explore(loop._pin_project, "graph", loop._pin_project.intents[0])
+    assert loop._claims == []
+    assert "human worker-type assignment" in loop._profile_failures[0][2]
+
+
+@pytest.mark.parametrize("human_edit, expected_worker", [
+    ({"skill_profiles": ["python"]}, "local-pi"),
+    ({"skill_profiles": [], "assigned_worker": "local-codex"}, "local-codex"),
+    ({"skill_profiles": [], "assigned_worker_type": "codex"}, "local-codex"),
+])
+def test_requirements_changed_between_fetch_and_claim_defer_without_launch_or_halt(human_edit, expected_worker):
+    loop = profile_loop()
+    original_heartbeat = loop.client.heartbeat
+    edited = False
+    def heartbeat(pid, iid, worker):
+        nonlocal edited
+        if not edited:
+            # A completed human edit after the dispatcher's snapshot but before its claim.
+            loop._pin_project.intents[0] = loop._pin_project.intents[0].model_copy(update=human_edit, deep=True)
+            edited = True
+        return original_heartbeat(pid, iid, worker)
+    loop.client.heartbeat = heartbeat
+    assert not loop._try_dispatch_project(_summary("proj_001"))
+    assert loop._claims == [("i001", "local-pi")]
+    assert loop._released_claims == [("i001", "local-pi")]
+    assert loop.futures == {}
+    assert loop._profile_failures == []
+    assert loop._try_dispatch_project(_summary("proj_001"))
+    assert loop._claims[-1] == ("i001", expected_worker)
+    assert len(loop.futures) == 1
+    assert loop._profile_failures == []

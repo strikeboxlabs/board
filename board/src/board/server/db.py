@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS intents (
     blocked_by TEXT,
     assigned_worker TEXT,
     assigned_worker_type TEXT,
+    skill_profiles TEXT NOT NULL DEFAULT '[]',
     dispatch_error TEXT,
     dispatch_error_at TEXT,
     dispatch_error_worker TEXT,
@@ -262,6 +263,8 @@ def _ensure_intent_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE intents ADD COLUMN assigned_worker TEXT")
     if "assigned_worker_type" not in columns:
         conn.execute("ALTER TABLE intents ADD COLUMN assigned_worker_type TEXT")
+    if "skill_profiles" not in columns:
+        conn.execute("ALTER TABLE intents ADD COLUMN skill_profiles TEXT NOT NULL DEFAULT '[]'")
     if "priority_set_by" not in columns:
         conn.execute("ALTER TABLE intents ADD COLUMN priority_set_by TEXT")
     if "priority_set_at" not in columns:

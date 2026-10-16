@@ -113,6 +113,11 @@ class FakeContainerManager:
     def write_text_file(self, container_name: str, path: str, content: str) -> None:
         self.writes.append((container_name, path, content))
 
+    def project_dir(self, project_id: str) -> Path:
+        directory = self.root / project_id
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
+
     def scratch_dir(self, project_id: str) -> str:
         directory = self.root / project_id / "scratch"
         directory.mkdir(parents=True, exist_ok=True)
@@ -144,6 +149,7 @@ class FakeClient:
     concluded: list[tuple[str, str, str, str]] = field(default_factory=list)
     completed: list[tuple[str, list[str], str, str]] = field(default_factory=list)
     created_intents: list[tuple[str, list[str], str, str]] = field(default_factory=list)
+    requested_skill_profiles: list[list[str]] = field(default_factory=list)
     released: list[tuple[str, str, str]] = field(default_factory=list)
     released_reasons: list[tuple[str, str]] = field(default_factory=list)
     registered_evidence: list[tuple[str, dict]] = field(default_factory=list)
@@ -160,8 +166,9 @@ class FakeClient:
         self.completed.append((project_id, from_ids, description, worker))
         return ApiResult(200, {})
 
-    def create_intent(self, project_id: str, from_ids: list[str], description: str, creator: str, priority: int | None = None, blocked_by: str | None = None) -> ApiResult:
+    def create_intent(self, project_id: str, from_ids: list[str], description: str, creator: str, priority: int | None = None, blocked_by: str | None = None, skill_profiles: list[str] | None = None) -> ApiResult:
         self.created_intents.append((project_id, from_ids, description, creator))
+        self.requested_skill_profiles.append(list(skill_profiles or []))
         return ApiResult(201, {})
 
     def release(self, project_id: str, intent_id: str, worker: str) -> ApiResult:

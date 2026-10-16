@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from board.skill_profiles import validate_skill_profile_ids
+
 IntentWorkerType = Literal["pi", "codex", "claudecode", "mock"]
 
 
@@ -32,6 +34,7 @@ class Intent(BaseModel):
     blocked_by: str | None = None
     assigned_worker: str | None = None
     assigned_worker_type: IntentWorkerType | None = None
+    skill_profiles: list[str] = Field(default_factory=list)
     dispatch_error: str | None = None
     dispatch_error_at: str | None = None
     dispatch_error_worker: str | None = None
@@ -43,6 +46,11 @@ class Intent(BaseModel):
     excluded: bool = False
 
     model_config = {"populate_by_name": True}
+
+    @field_validator("skill_profiles", mode="before")
+    @classmethod
+    def validate_profiles(cls, value):
+        return validate_skill_profile_ids(value)
 
 
 class UpdateIntentPriorityRequest(BaseModel):
@@ -61,7 +69,13 @@ class UpdateIntentPriorityRequest(BaseModel):
 class UpdateIntentAssignmentRequest(BaseModel):
     assigned_worker: str | None = None
     assigned_worker_type: IntentWorkerType | None = None
+    skill_profiles: list[str] = Field(default_factory=list)
     actor: str = "human"
+
+    @field_validator("skill_profiles", mode="before")
+    @classmethod
+    def validate_profiles(cls, value):
+        return validate_skill_profile_ids(value)
 
     @field_validator("assigned_worker", "actor")
     @classmethod
@@ -72,6 +86,16 @@ class UpdateIntentAssignmentRequest(BaseModel):
         if not text:
             return None
         return text
+
+
+class UpdateIntentSkillProfilesRequest(BaseModel):
+    skill_profiles: list[str]
+    actor: str = Field(default="human", min_length=1, max_length=200)
+
+    @field_validator("skill_profiles", mode="before")
+    @classmethod
+    def validate_profiles(cls, value):
+        return validate_skill_profile_ids(value)
 
 
 class FailIntentRequest(BaseModel):
@@ -279,6 +303,7 @@ class CreateHintRequest(BaseModel):
 
 
 class CreateIntentRequest(BaseModel):
+    skill_profiles: list[str] = Field(default_factory=list)
     from_: list[str] = Field(alias="from", min_length=1)
     description: str
     creator: str
@@ -299,6 +324,11 @@ class CreateIntentRequest(BaseModel):
         if not text:
             raise ValueError("must not be empty")
         return text
+
+    @field_validator("skill_profiles", mode="before")
+    @classmethod
+    def validate_profiles(cls, value):
+        return validate_skill_profile_ids(value)
 
     @field_validator("from_")
     @classmethod

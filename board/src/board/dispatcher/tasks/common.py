@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+
+import yaml
 from dataclasses import dataclass
 
 from board.dispatcher.config import DispatchConfig, WorkerConfig
@@ -60,16 +62,51 @@ def write_graph_snapshot_reference(
     graph_yaml: str,
     *,
     phase: str,
+    source_fact_ids: list[str] | None = None,
 ) -> str:
     # Snapshots live in the project's scratch dir (durable root), not a hardcoded /tmp path.
     path = f"{container_manager.scratch_dir(project_id)}/graph-{phase}-{uuid.uuid4().hex[:12]}.yaml"
     container_manager.write_text_file(container_name, path, graph_yaml)
+    if source_fact_ids is not None:
+        focused = focus_graph_yaml(graph_yaml, source_fact_ids)
+        focused_path = path.removesuffix(".yaml") + "-focus.yaml"
+        container_manager.write_text_file(container_name, focused_path, focused)
+        return ("Read the intent-focused dependency view first:\n" + focused_path
+                + "\nThe complete graph remains available when needed:\n" + path
+                + "\nThe focused view omits unrelated branches; it does not establish whole-project coverage.")
     return (
-        "The graph YAML snapshot is stored in this file inside the current container:\n\n"
+        "The complete graph YAML snapshot is stored in the worker environment:\n\n"
         f"{path}\n\n"
         "Before using the graph, read the entire file and treat its contents as the YAML snapshot "
         "for this Graph section."
     )
+
+
+def focus_graph_yaml(graph_yaml: str, source_fact_ids: list[str]) -> str:
+    """Keep source facts and their provenance; retain the full snapshot separately."""
+    graph = yaml.safe_load(graph_yaml)
+    if not isinstance(graph, dict):
+        return graph_yaml
+    selected = {"origin", "goal", *source_fact_ids}
+    intents = graph.get("intents", [])
+    changed = True
+    while changed:
+        changed = False
+        for intent in intents:
+            if intent.get("to") in selected:
+                parents = set(intent.get("from", []))
+                if not parents.issubset(selected):
+                    selected.update(parents)
+                    changed = True
+    focused = {key: value for key, value in graph.items() if key not in ("facts", "intents", "jobs")}
+    facts = graph.get("facts", [])
+    focused["facts"] = [fact for fact in facts if fact.get("id") in selected]
+    focused["intents"] = [intent for intent in intents if intent.get("to") in selected]
+    focused["jobs"] = [job for job in graph.get("jobs", []) if job.get("fact") in selected]
+    focused["context_view"] = {"kind": "intent-dependencies", "source_fact_ids": source_fact_ids,
+        "omitted_facts": len(facts) - len(focused["facts"]),
+        "omitted_intents": len(intents) - len(focused["intents"])}
+    return yaml.safe_dump(focused, allow_unicode=True, sort_keys=False)
 
 
 def run_worker_process(

@@ -43,6 +43,7 @@ tasks:
 #   <root>/<project_id>/reports/                auto-generated timeline + reports
 # "workspace_root" is a legacy alias for the same root.
 local:
+  pi_session_storage: project  # <project>/sessions/pi; native persistent Pi transcripts
   evidence_root: "/data/strikebox-data"
   completed_action: keep       # keep | remove
 
@@ -76,3 +77,12 @@ workers:
   #   task_types: [reason]
   #   max_running: 1
   #   priority: 2
+
+# Optional knowledge profiles. Provisioned installers register only installed catalogs.
+# Enable after setting existing catalog paths; selected skill packages are frozen per attempt.
+skills:
+  enabled: false
+  catalogs: []
+  default_profiles: [general]
+  max_metadata_tokens: 6000
+  profiles: {}

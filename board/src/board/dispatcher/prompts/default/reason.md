@@ -16,6 +16,12 @@ Facts are confirmed results; intents are work; hints are user guidance. Check wh
 - The platform monitors background jobs. Do not create work to poll or supervise them.
 - Prefer waiting for another worker's result over a speculative dependent intent. Remain within the project's goal and user constraints.
 
+Skill profiles:
+{skill_profiles}
+- When useful, add skill_profiles: ["profile-id"] to a new intent using only the IDs listed above.
+- Request the smallest suitable set for that intent. Profiles provide task knowledge; they do not grant permissions or override project constraints.
+- Omit skill_profiles when no profile is needed or none is listed. Existing profiles remain part of the intent and are separate from human worker routing.
+
 Graph:
 {graph_yaml}
 

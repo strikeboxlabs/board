@@ -5,6 +5,7 @@ import json
 import uuid
 import time
 
+from board.dispatcher.skills import prepare_pi_worker, profile_summaries
 from board.dispatcher.config import DispatchConfig, WorkerConfig
 from board.dispatcher.contracts import parse_json_output, validate_reason_payload
 from board.dispatcher.prompting import (
@@ -50,6 +51,7 @@ def run_reason_task(
     lease.start()
     try:
         container_name = container_manager.ensure_running(project.project.id)
+        worker = prepare_pi_worker(config, worker, container_manager, project.project.id, planning=True)
 
         if task_healthcheck_enabled(config):
             LOG.info(
@@ -94,6 +96,7 @@ def run_reason_task(
                 "blocked_by": intent.blocked_by,
                 "assigned_worker": intent.assigned_worker,
                 "assigned_worker_type": intent.assigned_worker_type,
+                "skill_profiles": intent.skill_profiles,
                 "dispatch_error": intent.dispatch_error,
                 "cancel_requested_at": intent.cancel_requested_at,
             }
@@ -125,6 +128,7 @@ def run_reason_task(
                 "fact_ids": format_fact_ids(allowed_fact_ids),
                 "open_intents": format_open_intents(open_intents),
                 "max_intents": str(max_intents),
+                "skill_profiles": profile_summaries(config.skills),
             },
         )
 
@@ -294,6 +298,7 @@ def run_reason_task(
                     worker.name,
                     priority=intent_data.get("priority"),
                     blocked_by=intent_data.get("blocked_by"),
+                    **({"skill_profiles": intent_data["skill_profiles"]} if "skill_profiles" in intent_data else {}),
                 )
                 if response.status_code == 403:
                     LOG.info("project became inactive during reason intent create project=%s worker=%s created=%s", project.project.id, worker.name, created)

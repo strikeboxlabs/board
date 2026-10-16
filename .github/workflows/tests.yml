@@ -1,0 +1,164 @@
+name: Tests
+
+"on":
+  push:
+    branches: [main, "codex/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: board
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Set up pinned Node for Pi 1.3
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22.23.3"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.13.1"
+          enable-cache: true
+          cache-dependency-glob: board/uv.lock
+      - name: Install locked application and test dependencies
+        run: uv sync --locked --group dev --python 3.12
+      - name: Install isolated Pi 1.3 runtime fixture
+        run: |
+          npm install --prefix "$RUNNER_TEMP/pi-runtime-fixture" --no-audit --no-fund --save-exact @earendil-works/pi-coding-agent@1.3.0
+          cli="$RUNNER_TEMP/pi-runtime-fixture/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
+          test -f "$cli"
+          echo "BOARD_TEST_PI_CLI=$cli" >> "$GITHUB_ENV"
+      - name: Run the complete test suite
+        run: uv run --no-sync python -m pytest --tb=short
+
+  skill-library-integration:
+    name: Linux skill library integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      BOARD_TEST_PYTHON: ${{ github.workspace }}/source/board/.venv/bin/python
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Check out Board
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: source
+          persist-credentials: false
+      - name: Check out the research library at the reviewed revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: strikeboxlabs/research-library
+          ref: ba60a7a15903fb892e38ba74982c0517bcf35cc4
+          path: research-library
+          persist-credentials: false
+      - name: Check out SAST at the reviewed revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: strikeboxlabs/sast
+          ref: 27832e212a12dedebd05e4d42fe808625377ccfc
+          path: sast
+          persist-credentials: false
+      - name: Check out stages at the reviewed revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: strikeboxlabs/stages
+          ref: d805b68128b593c502e1c07d36366f2df4a53b24
+          path: stages
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.13.1"
+          enable-cache: true
+          cache-dependency-glob: source/board/uv.lock
+      - name: Install locked Board and test dependencies
+        working-directory: source/board
+        run: uv sync --locked --group dev --python 3.12
+      - name: Check library packaging, catalogs and documented Bash syntax
+        run: |
+          "$BOARD_TEST_PYTHON" -B research-library/scripts/check_repository.py --bash /usr/bin/bash
+          "$BOARD_TEST_PYTHON" -B sast/scripts/check_repository.py --bash /usr/bin/bash
+          while IFS= read -r -d '' script; do
+            bash --noprofile --norc -n "$script"
+          done < <(find stages -type f -name '*.sh' -print0)
+      - name: Run library and stages fixtures with no skipped Linux coverage
+        run: |
+          "$BOARD_TEST_PYTHON" -B - <<'PY'
+          import pathlib
+          import subprocess
+          import sys
+          code = """import sys, unittest
+          suite = unittest.defaultTestLoader.discover('tests')
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          sys.exit(not result.wasSuccessful() or bool(result.skipped) or result.testsRun == 0)
+          """
+          for repository in ('research-library', 'sast', 'stages'):
+              print('Testing ' + repository, flush=True)
+              subprocess.run([sys.executable, '-B', '-c', code], cwd=repository, check=True)
+          PY
+      - name: Validate Board against both installed library catalogs without models
+        run: |
+          "$BOARD_TEST_PYTHON" -B - <<'PY'
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import sys
+          import tempfile
+          root = pathlib.Path.cwd()
+          catalogs = [(root / name / 'catalog.json').resolve() for name in ('research-library', 'sast')]
+          document = {
+              'server': 'http://127.0.0.1:8765',
+              'runtime': {'execution': 'local', 'worker_healthcheck': 'disabled',
+                          'max_workers': 2, 'max_running_projects': 1, 'max_project_workers': 2,
+                          'interval': 3, 'healthcheck_timeout': 15, 'prompt_group': 'default'},
+              'tasks': {'bootstrap': {'timeout': 120, 'conclude_timeout': 30},
+                        'reason': {'timeout': 60}, 'explore': {'timeout': 300, 'conclude_timeout': 60}},
+              'local': {'evidence_root': str(pathlib.Path(os.environ['RUNNER_TEMP']) / 'unused-runs'),
+                        'pi_session_storage': 'project'},
+              'workers': [{'name': 'fixture-pi', 'type': 'pi', 'priority': 0,
+                           'task_types': ['bootstrap', 'reason', 'explore'], 'max_running': 1}],
+              'skills': {'enabled': True, 'catalogs': [str(path) for path in catalogs],
+                         'default_profiles': ['source-review'], 'max_metadata_tokens': 6000},
+          }
+          descriptor, config = tempfile.mkstemp(prefix='board-library-ci-', suffix='.yaml', dir=os.environ['RUNNER_TEMP'])
+          try:
+              with os.fdopen(descriptor, 'w') as output:
+                  json.dump(document, output)
+              command = [sys.executable, '-B', '-c', 'from board.cli import main; main()',
+                         'skills', 'doctor', '--config', config, '--json']
+              result = subprocess.run(command, text=True, capture_output=True, timeout=60)
+              report = json.loads(result.stdout)
+              if result.returncode or report['errors']:
+                  raise SystemExit(result.stdout or result.stderr)
+              expected = sum(len(json.loads(path.read_text())['skills']) for path in catalogs)
+              assert report['catalog_skill_count'] == expected
+              profiles = {profile['id']: profile for profile in report['profiles']}
+              assert profiles['source-review']['skills'] > 0
+              assert profiles['general']['skills'] > 0
+              print(json.dumps({'catalog_skill_count': expected, 'profiles': [profiles['source-review'], profiles['general']]}, indent=2))
+          finally:
+              pathlib.Path(config).unlink()
+          PY

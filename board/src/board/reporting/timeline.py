@@ -6,6 +6,7 @@ auto-write and ``board export --format timeline`` all share it.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
 from board.reporting.data import format_export_timestamp, load_project_data
@@ -53,6 +54,8 @@ def render_timeline(conn: sqlite3.Connection, project_id: str) -> str:
             meta += f"\n  assigned_to: {i['assigned_worker']}"
         if "assigned_worker_type" in i.keys() and i["assigned_worker_type"]:
             meta += f"\n  worker_type: {i['assigned_worker_type']}"
+        if "skill_profiles" in i.keys() and i["skill_profiles"] != "[]":
+            meta += "\n  skill_profiles: " + ", ".join(json.loads(i["skill_profiles"]))
         if "dispatch_error" in i.keys() and i["dispatch_error"]:
             meta += f"\n  error: {i['dispatch_error']}"
         if "cancel_requested_at" in i.keys() and i["cancel_requested_at"]:

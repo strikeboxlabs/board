@@ -94,28 +94,25 @@ class PiDriver(WorkerDriver):
         return self._wrap_with_models(worker, argv)
 
     def _local_argv(self, worker: WorkerConfig, prompt: str, session: str | None) -> list[str]:
-        # Native pi: no models.json injection and no --provider/--model overrides, so pi uses
-        # its own host configuration. A tiny sh wrapper just ensures the session dir exists.
-        session_dir = self._session_dir(worker)
-        pi_argv = [
-            "--mode",
-            "json",
-            "--session-dir",
-            session_dir,
-            "--no-extensions",
-            "--no-skills",
-            "--skill",
-            "/opt/research-library/skills",
-            "--no-prompt-templates",
-            "--no-themes",
-            "--no-context-files",
-            "--tools",
-            "read,write,edit,bash,grep,find,ls",
-        ]
+        # Local workers retain the daemon user's Pi provider/auth configuration.
+        session_dir = worker.env.get("BOARD_PI_SESSION_DIR", self._session_dir(worker))
+        pi_argv = ["--mode", "json", "--no-extensions", "--no-skills",
+                   "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-approve",
+                   "--tools", ",".join(worker.pi_tools)]
+        paths = json.loads(worker.env.get("BOARD_PI_SKILLS_JSON", "[]"))
+        if not isinstance(paths, list) or any(not isinstance(path, str) or not path for path in paths):
+            raise ValueError("Invalid resolved Pi skill paths")
+        for path in paths:
+            pi_argv.extend(["--skill", path])
+        for extension in worker.pi_extensions:
+            pi_argv.extend(["--extension", extension])
+        if worker.env.get("BOARD_PI_CONTEXT_FILE"):
+            pi_argv.extend(["--append-system-prompt", worker.env["BOARD_PI_CONTEXT_FILE"]])
         if session:
             pi_argv.extend(["--session", session])
         pi_argv.extend(["-p", prompt])
-        script = 'sdir="$1"\nshift\nmkdir -p "$sdir"\nexec pi "$@"\n'
+        # Exactly one --session-dir, with a restrictive directory creation mask.
+        script = 'sdir="$1"\nshift\numask 077\nmkdir -p "$sdir" || exit 1\nexec pi --session-dir "$sdir" "$@"\n'
         return ["/bin/sh", "-lc", script, "--", session_dir, *pi_argv]
 
     def extract_session(self, session: str | None, stdout: str, stderr: str) -> str | None:
@@ -231,7 +228,7 @@ class PiDriver(WorkerDriver):
     @staticmethod
     def _iter_events(stdout: str) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
-        for line in stdout.splitlines():
+        for line in stdout.split("\n"):
             line = line.strip()
             if not line:
                 continue

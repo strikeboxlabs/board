@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 
+from board.dispatcher.skills import prepare_pi_worker
 from board.dispatcher.config import DispatchConfig, WorkerConfig
 from board.dispatcher.contracts import parse_json_output, validate_explore_payload
 from board.dispatcher.prompting import load_prompt, render_prompt, with_execution_constraints
@@ -48,6 +49,7 @@ def run_explore_task(
     lease.start()
     try:
         container_name = container_manager.ensure_running(project.project.id)
+        worker = prepare_pi_worker(config, worker, container_manager, project.project.id, intent.id, intent.skill_profiles)
 
         if task_healthcheck_enabled(config):
             LOG.info(
@@ -99,6 +101,7 @@ def run_explore_task(
                     project.project.id,
                     export_yaml.strip(),
                     phase="explore_execute",
+                    source_fact_ids=intent.from_,
                 ),
                 "intent_id": intent.id,
                 "intent_description": intent.description,
@@ -308,6 +311,7 @@ def _try_conclude_fallback(
                 project_id,
                 export_yaml.strip(),
                 phase="explore_conclude",
+                source_fact_ids=intent.from_,
             ),
             "intent_id": intent.id,
             "intent_description": intent.description,

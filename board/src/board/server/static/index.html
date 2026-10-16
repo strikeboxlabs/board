@@ -861,6 +861,9 @@
                     <p class="text-[10px] font-semibold text-brand-500 uppercase tracking-widest">Produced By</p>
                     <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Intent</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().id"></span></div>
                     <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">From</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().from.join(', ')"></span></div>
+                    <template x-if="(selectedFactProducingIntent().skill_profiles || []).length">
+                      <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Skill profiles</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().skill_profiles.join(', ')"></span></div>
+                    </template>
                     <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Creator</span><span class="text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().creator"></span></div>
                     <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Worker</span><span class="text-slate-600 text-right break-all" x-text="selectedFactProducingIntent().worker || '—'"></span></div>
                     <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Concluded</span><span class="text-slate-600 text-right break-words" x-text="formatTime(selectedFactProducingIntent().concluded_at || selectedFactProducingIntent().created_at)"></span></div>
@@ -909,6 +912,9 @@
                 <template x-if="selectedIntentRecord().assigned_worker_type">
                   <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Worker type</span><span class="text-slate-600 text-right" x-text="workerTypeLabel(selectedIntentRecord().assigned_worker_type)"></span></div>
                 </template>
+                <template x-if="(selectedIntentRecord().skill_profiles || []).length">
+                  <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Skill profiles</span><span class="font-mono text-slate-600 text-right break-all" x-text="selectedIntentRecord().skill_profiles.join(', ')"></span></div>
+                </template>
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Creator</span><span class="text-slate-600 text-right break-all" x-text="selectedIntentRecord().creator"></span></div>
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Worker</span><span class="text-slate-600 text-right break-all" x-text="selectedIntentRecord().worker || '—'"></span></div>
                 <div class="flex items-start justify-between gap-3"><span class="text-slate-400 shrink-0">Heartbeat</span><span class="text-slate-600 text-right break-words" x-text="selectedIntentRecord().last_heartbeat_at ? formatTime(selectedIntentRecord().last_heartbeat_at) : '—'"></span></div>
@@ -942,6 +948,11 @@
                           <span class="text-slate-400 text-[11px] w-14 shrink-0">Worker</span>
                           <input type="text" x-model="intentEdit.assigned_worker" placeholder="auto — e.g. local-pi, local-codex" class="flex-1 px-2 py-1 border border-slate-200 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-100">
                         </div>
+                        <div class="flex items-center gap-2">
+                          <label for="intent-edit-skill-profiles" class="text-slate-400 text-[11px] w-14 shrink-0">Profiles</label>
+                          <input id="intent-edit-skill-profiles" type="text" x-model="intentEdit.skill_profiles" :disabled="!!selectedIntentRecord().worker" placeholder="profile-id, another-profile" class="flex-1 min-w-0 px-2 py-1 border border-slate-200 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:bg-slate-50">
+                        </div>
+                        <p class="text-slate-400 text-[10px]">Knowledge profiles must be set before a worker starts. Empty uses dispatcher defaults.</p>
                         <div class="flex items-center gap-2">
                           <button @click="saveIntentEdit()" class="px-2.5 py-1 rounded-lg bg-brand-500 text-white text-[11px] font-medium hover:bg-brand-600">Save</button>
                           <button @click="cancelIntentEdit()" class="px-2.5 py-1 rounded-lg border border-slate-200 text-slate-500 text-[11px] hover:bg-slate-50">Cancel</button>
@@ -1155,6 +1166,11 @@
           <option value="claudecode">Claude Code</option>
         </select>
         <p class="text-[11px] text-slate-400 mt-1" x-text="intentForm.assigned_worker_type ? 'The intent waits until a matching worker is available.' : 'Board chooses an available worker. You can also claim the intent for manual work.'"></p>
+      </div>
+      <div>
+        <label for="intent-skill-profiles" class="text-[11px] text-slate-400 mb-1 block font-medium">Skill profiles</label>
+        <input id="intent-skill-profiles" type="text" x-model="intentForm.skill_profiles" placeholder="profile-id, another-profile" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100">
+        <p class="text-[11px] text-slate-400 mt-1">Knowledge profiles for this intent. Empty uses dispatcher defaults.</p>
       </div>
       <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
         Actor: <span class="font-medium text-slate-700" x-text="actorName()"></span>
@@ -1487,8 +1503,8 @@ function boardApp() {
     isAbortingProject: false,
 
     newProject: { title: '', origin: '', goal: '', bootstrap: true, hints: [{ content: '' }] },
-    intentForm: { description: '', assigned_worker_type: '' },
-    intentEdit: { open: false, priority: 50, assigned_worker: '', assigned_worker_type: '' },
+    intentForm: { description: '', assigned_worker_type: '', skill_profiles: '' },
+    intentEdit: { open: false, priority: 50, assigned_worker: '', assigned_worker_type: '', skill_profiles: '' },
     concludeForm: { description: '', intentId: '' },
     completeForm: { description: '' },
     hintForm: { content: '' },
@@ -3427,7 +3443,7 @@ function boardApp() {
     openIntentEdit() {
       const i = this.selectedIntentRecord();
       if (!i) return;
-      this.intentEdit = { open: true, priority: i.priority != null ? i.priority : 50, assigned_worker: i.assigned_worker || '', assigned_worker_type: i.assigned_worker_type || '' };
+      this.intentEdit = { open: true, priority: i.priority != null ? i.priority : 50, assigned_worker: i.assigned_worker || '', assigned_worker_type: i.assigned_worker_type || '', skill_profiles: (i.skill_profiles || []).join(', ') };
     },
     cancelIntentEdit() {
       this.intentEdit.open = false;
@@ -3439,8 +3455,13 @@ function boardApp() {
       const worker = (this.intentEdit.assigned_worker || '').trim();
       const workerType = this.intentEdit.assigned_worker_type || null;
       try {
+        const skillProfiles = this.parseSkillProfiles(this.intentEdit.skill_profiles);
+        const assignment = { assigned_worker: worker || null, assigned_worker_type: workerType, actor: this.actorName() };
+        if (JSON.stringify(skillProfiles) !== JSON.stringify(i.skill_profiles || [])) {
+          assignment.skill_profiles = skillProfiles;
+        }
         await this.api('PUT', `/projects/${this.selectedProjectId}/intents/${i.id}/priority`, { priority, actor: this.actorName() });
-        await this.api('PUT', `/projects/${this.selectedProjectId}/intents/${i.id}/assign`, { assigned_worker: worker || null, assigned_worker_type: workerType, actor: this.actorName() });
+        await this.api('PUT', `/projects/${this.selectedProjectId}/intents/${i.id}/assign`, assignment);
         this.intentEdit.open = false;
         await this.loadProject(this.selectedProjectId);
         this.updateGraph();
@@ -3852,7 +3873,7 @@ function boardApp() {
 
     openCreateIntent() {
       if (!this.canActOnSelectedFacts()) return;
-      this.intentForm = { description:'', assigned_worker_type: '' };
+      this.intentForm = { description:'', assigned_worker_type: '', skill_profiles: '' };
       this.showIntentModal = true;
     },
 
@@ -3907,6 +3928,15 @@ function boardApp() {
       }
     },
 
+    parseSkillProfiles(value) {
+      const profiles = (value || '').split(',').map(v => v.trim()).filter(Boolean);
+      if (profiles.length > 16 || profiles.some(v => v.length > 64 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(v))) {
+        throw new Error('Use at most 16 profile IDs: lowercase letters, digits and single hyphens, up to 64 characters each.');
+      }
+      if (new Set(profiles).size !== profiles.length) throw new Error('Skill profile IDs must be unique.');
+      return profiles;
+    },
+
     workerTypeLabel(type) {
       return ({ pi: 'Pi', codex: 'Codex', claudecode: 'Claude Code', mock: 'Mock' })[type] || type || 'Automatic';
     },
@@ -3924,6 +3954,7 @@ function boardApp() {
           creator: actor,
           worker: claim ? actor : null,
           assigned_worker_type: this.intentForm.assigned_worker_type || null,
+          skill_profiles: this.parseSkillProfiles(this.intentForm.skill_profiles),
         });
         this.showIntentModal = false;
         await this.loadProject(this.selectedProjectId);

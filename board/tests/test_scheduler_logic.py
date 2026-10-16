@@ -144,7 +144,8 @@ def test_local_example_dispatches_up_to_three_independent_tasks(intent_count, ex
     loop.client = SimpleNamespace(
         get_project=lambda _project_id: project,
         export_project=lambda _project_id: "graph",
-        heartbeat=Mock(return_value=ApiResult(200)),
+        heartbeat=Mock(side_effect=lambda _pid, iid, worker: ApiResult(200,
+            next(intent for intent in project.intents if intent.id == iid).model_copy(update={"worker": worker}).model_dump(by_alias=True))),
     )
     # Keep submitted tasks pending so capacity is exercised before any task finishes.
     loop.executor = SimpleNamespace(submit=Mock(side_effect=lambda *_args: Future()))

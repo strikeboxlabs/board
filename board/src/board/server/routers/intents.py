@@ -1,3 +1,5 @@
+import json
+
 from fastapi import APIRouter, HTTPException, Response
 
 from board.server.db import get_conn
@@ -12,6 +14,7 @@ from board.server.models import (
     Intent,
     UpdateIntentAssignmentRequest,
     UpdateIntentPriorityRequest,
+    UpdateIntentSkillProfilesRequest,
 )
 from board.server.services import (
     check_project_active,
@@ -47,7 +50,7 @@ def create_intent(project_id: str, body: CreateIntentRequest):
         iid = next_intent_id(conn, project_id)
         claimed = body.worker is not None
         conn.execute(
-            "INSERT INTO intents (id, project_id, to_fact_id, description, creator, worker, last_heartbeat_at, created_at, concluded_at, priority, blocked_by, assigned_worker, assigned_worker_type) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
+            "INSERT INTO intents (id, project_id, to_fact_id, description, creator, worker, last_heartbeat_at, created_at, concluded_at, priority, blocked_by, assigned_worker, assigned_worker_type, skill_profiles) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)",
             (
                 iid,
                 project_id,
@@ -60,6 +63,7 @@ def create_intent(project_id: str, body: CreateIntentRequest):
                 body.blocked_by,
                 body.assigned_worker,
                 body.assigned_worker_type,
+                json.dumps(body.skill_profiles),
             ),
         )
         for fid in body.from_:
@@ -82,6 +86,7 @@ def create_intent(project_id: str, body: CreateIntentRequest):
             blocked_by=body.blocked_by,
             assigned_worker=body.assigned_worker,
             assigned_worker_type=body.assigned_worker_type,
+            skill_profiles=body.skill_profiles,
         )
 
 
@@ -124,8 +129,14 @@ def update_intent_assignment(project_id: str, intent_id: str, body: UpdateIntent
     the intent to wait while other runnable intents dispatch around it.
     """
     with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         check_project_active(conn, project_id)
-        get_intent_or_404(conn, project_id, intent_id)
+        row = get_intent_or_404(conn, project_id, intent_id)
+        if "skill_profiles" in body.model_fields_set:
+            if row["to_fact_id"] is not None or row["worker"] is not None:
+                raise HTTPException(409, "Skill profiles can only change on unclaimed open intents")
+            if row["cancel_requested_at"] is not None or row["excluded"]:
+                raise HTTPException(409, "Cancelled or excluded intents cannot change skill profiles")
         conn.execute(
             "UPDATE intents SET assigned_worker = ? WHERE id = ? AND project_id = ?",
             (body.assigned_worker, intent_id, project_id),
@@ -135,9 +146,38 @@ def update_intent_assignment(project_id: str, intent_id: str, body: UpdateIntent
                 "UPDATE intents SET assigned_worker_type = ? WHERE id = ? AND project_id = ?",
                 (body.assigned_worker_type, intent_id, project_id),
             )
+        if "skill_profiles" in body.model_fields_set:
+            conn.execute(
+                "UPDATE intents SET skill_profiles = ? WHERE id = ? AND project_id = ?",
+                (json.dumps(body.skill_profiles), intent_id, project_id),
+            )
         updated = conn.execute(
             "SELECT * FROM intents WHERE id = ? AND project_id = ?",
             (intent_id, project_id),
+        ).fetchone()
+        return intent_to_model(conn, updated, project_id)
+
+
+@router.put(
+    "/projects/{project_id}/intents/{intent_id}/skill-profiles",
+    response_model=Intent,
+)
+def update_intent_skill_profiles(project_id: str, intent_id: str, body: UpdateIntentSkillProfilesRequest):
+    """Change requested knowledge profiles before a worker claims the intent."""
+    with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        check_project_active(conn, project_id)
+        row = get_intent_or_404(conn, project_id, intent_id)
+        if row["to_fact_id"] is not None or row["worker"] is not None:
+            raise HTTPException(409, "Skill profiles can only change on unclaimed open intents")
+        if row["cancel_requested_at"] is not None or row["excluded"]:
+            raise HTTPException(409, "Cancelled or excluded intents cannot change skill profiles")
+        conn.execute(
+            "UPDATE intents SET skill_profiles = ? WHERE id = ? AND project_id = ?",
+            (json.dumps(body.skill_profiles), intent_id, project_id),
+        )
+        updated = conn.execute(
+            "SELECT * FROM intents WHERE id = ? AND project_id = ?", (intent_id, project_id),
         ).fetchone()
         return intent_to_model(conn, updated, project_id)
 

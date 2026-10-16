@@ -52,7 +52,7 @@ class LocalBackend:
 
     @staticmethod
     def _seed_workspace_agents_md(workspace: Path) -> None:
-        """Seed an AGENTS.md runbook into the workspace (pi loads it each session).
+        """Seed a reference runbook; Pi receives the packaged contract explicitly.
 
         Copied only when absent — edit the file in place to customise a project;
         it is never overwritten.
