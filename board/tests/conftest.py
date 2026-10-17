@@ -184,10 +184,10 @@ class FakeClient:
         self.released_reasons.append((project_id, worker))
         return ApiResult(200, {})
 
-    def heartbeat(self, _project_id: str, _intent_id: str, _worker: str) -> ApiResult:
+    def heartbeat(self, _project_id: str, _intent_id: str, _worker: str, *, request_timeout: float | None = None) -> ApiResult:
         return ApiResult(200, {})
 
-    def reason_heartbeat(self, _project_id: str, _worker: str, lease_id: str | None = None) -> ApiResult:
+    def reason_heartbeat(self, _project_id: str, _worker: str, lease_id: str | None = None, *, request_timeout: float | None = None) -> ApiResult:
         return ApiResult(200, {})
 
     def register_evidence(self, project_id: str, payload: dict) -> ApiResult:

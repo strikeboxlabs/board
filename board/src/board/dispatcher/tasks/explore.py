@@ -79,7 +79,7 @@ def run_explore_task(
                     lease.failure.status_code,
                 )
                 best_effort_release(client, project.project.id, intent.id, worker.name)
-                return "failed"
+                return TaskFailure("failed", f"Worker {worker.name}: {lease.failure.safe_message}")
             if not health.ok:
                 LOG.warning(
                     "worker unhealthy project=%s intent=%s worker=%s status=%s detail=%s",
@@ -148,7 +148,7 @@ def run_explore_task(
                 execute_ms,
             )
             best_effort_release(client, project.project.id, intent.id, worker.name)
-            return "failed"
+            return TaskFailure("failed", f"Worker {worker.name}: {lease.failure.safe_message}")
         if not did_timeout(first) and first.returncode == 0:
             try:
                 model_output = driver.extract_response_text(first.stdout, first.stderr)
@@ -279,7 +279,7 @@ def _try_conclude_fallback(
     if lease.failure is not None:
         LOG.warning("conclude fallback skipped because heartbeat already lost project=%s intent=%s worker=%s", project_id, intent.id, worker.name)
         best_effort_release(client, project_id, intent.id, worker.name)
-        return "failed"
+        return TaskFailure("failed", f"Worker {worker.name}: {lease.failure.safe_message}")
     if cancellation.is_cancelled:
         LOG.info(
             "conclude fallback skipped because task was cancelled project=%s intent=%s worker=%s reason=%s",
@@ -347,7 +347,7 @@ def _try_conclude_fallback(
         return "cancelled"
     if lease.failure is not None:
         best_effort_release(client, project_id, intent.id, worker.name)
-        return "failed"
+        return TaskFailure("failed", f"Worker {worker.name}: {lease.failure.safe_message}")
     if result.timed_out or result.returncode != 0:
         LOG.warning(
             "conclude failed project=%s intent=%s worker=%s code=%s timed_out=%s conclude_ms=%s stdout_preview=%s stderr_preview=%s",

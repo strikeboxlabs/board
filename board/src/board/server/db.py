@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Generator
 
 DEFAULT_DB = Path.home() / ".local" / "share" / "board" / "board.db"
+BUSY_TIMEOUT_SECONDS = 1.0
 
 _db_path: Path | None = None
 
@@ -306,11 +307,11 @@ def _ensure_intent_columns(conn: sqlite3.Connection) -> None:
 @contextmanager
 def get_conn() -> Generator[sqlite3.Connection, None, None]:
     assert _db_path is not None
-    conn = sqlite3.connect(str(_db_path))
+    conn = sqlite3.connect(str(_db_path), timeout=BUSY_TIMEOUT_SECONDS)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
     try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
         yield conn
         conn.commit()
     except Exception:
@@ -318,6 +319,21 @@ def get_conn() -> Generator[sqlite3.Connection, None, None]:
         raise
     finally:
         conn.close()
+
+
+@contextmanager
+def get_read_conn() -> Generator[sqlite3.Connection, None, None]:
+    """Read one consistent WAL snapshot without holding a writer transaction."""
+    with get_conn() as conn:
+        conn.execute("PRAGMA query_only=ON")
+        conn.execute("BEGIN")
+        yield conn
+
+
+def is_contention_error(exc: sqlite3.OperationalError) -> bool:
+    """Recognize SQLite's primary/extended lock codes without matching SQL text."""
+    code = getattr(exc, "sqlite_errorcode", None)
+    return isinstance(code, int) and code & 0xFF in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
 
 
 def current_db_path() -> Path | None:

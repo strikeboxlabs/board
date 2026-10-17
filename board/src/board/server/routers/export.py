@@ -7,7 +7,7 @@ from board.reporting.paths import default_projects_root
 from board.reporting.timeline import render_timeline
 from board.reporting.yaml_export import render_graph_yaml
 from board.server import db
-from board.server.db import get_conn
+from board.server.db import get_conn, get_read_conn
 from board.server.services import expire_reason_leases, expire_workers, get_project_or_404
 
 router = APIRouter(tags=["export"])
@@ -19,8 +19,11 @@ def export_project(project_id: str, format: str = "yaml"):
         raise HTTPException(400, "Supported formats: yaml, timeline")
 
     with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         expire_workers(conn, project_id)
         expire_reason_leases(conn, project_id)
+
+    with get_read_conn() as conn:
         try:
             if format == "timeline":
                 text = render_timeline(conn, project_id)
@@ -38,8 +41,11 @@ def project_report(project_id: str, type: str = "human"):
         raise HTTPException(400, "Supported report types: human, agent, agent-json")
 
     with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         expire_workers(conn, project_id)
         expire_reason_leases(conn, project_id)
+
+    with get_read_conn() as conn:
         get_project_or_404(conn, project_id)
 
         evidence_root = default_projects_root()

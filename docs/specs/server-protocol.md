@@ -12,6 +12,30 @@ The graph remains the sole representation of knowledge and causality. The protoc
 
 The system performs no reasoning or decision-making; it only maintains graph consistency.
 
+### Database contention and heartbeat failures
+
+SQLite BUSY/LOCKED errors, including their extended result codes, return HTTP 503
+with `Retry-After: 1` and the JSON body
+`{"detail":"Board database is busy; retry shortly.","code":"database_busy"}`.
+Database lock waits are bounded to one second. A failed transaction rolls back;
+the server does not replay the request. Unrelated SQL errors remain errors, and
+ownership conflicts remain HTTP 409.
+
+Project list/detail and graph/report GET handlers commit lease-expiry maintenance
+before opening a consistent, query-only read snapshot. Hashing and rendering do
+not retain the maintenance write lock. Claim and renewal checks still run in
+atomic writer transactions, with expiry clocks sampled after lock acquisition.
+
+The dispatcher bounds heartbeat renewal requests and any transient retries within
+its existing client confirmation window; it does not extend that window. HTTP
+403/409 stops renewal immediately, while a separate watchdog initiates stopping
+if the client window expires during a blocked request. Late responses cannot
+revive a failed or stopped lease. See [heartbeat policy and limits](../planner-efficiency.md).
+Intent heartbeat failures preserve a sanitized HTTP/transport diagnostic in
+`dispatch_error`, the timeline and the durable error history. HTTP response bodies
+are excluded from that diagnostic, and the existing intent fail-stop remains in
+effect.
+
 ### Design origins
 
 This protocol is a modern reconstruction of **Blackboard Architecture**. CMU's Hearsay-II system introduced the same paradigm in the 1970s: multiple experts work around a shared blackboard, each reading the current state and contributing knowledge, without central scheduling. Facts correspond to blackboard content, Intents to experts' action records, and Hints to annotations. Unlike a classic blackboard that holds only the current state, this protocol preserves the complete causal chain through Intents, making the graph both a knowledge base and an audit log of the reasoning path.

@@ -20,6 +20,7 @@ from board.dispatcher.runtime.cancellation import TaskCancellation
 from board.dispatcher.runtime.containers import ContainerManager
 from board.dispatcher.runtime.heartbeat import HeartbeatLease
 from board.dispatcher.tasks.common import (
+    TaskFailure,
     best_effort_release_reason,
     cancel_reason,
     did_timeout,
@@ -78,7 +79,7 @@ def run_reason_task(
                     worker.name,
                     lease.failure.status_code,
                 )
-                return "failed"
+                return TaskFailure("failed", f"Worker {worker.name}: {lease.failure.safe_message}")
             if not health.ok:
                 LOG.warning(
                     "worker unhealthy project=%s worker=%s status=%s detail=%s",
@@ -196,7 +197,7 @@ def run_reason_task(
                 lease.failure.status_code,
                 execute_ms,
             )
-            return "failed"
+            return TaskFailure("failed", f"Worker {worker.name}: {lease.failure.safe_message}")
         if did_timeout(result):
             LOG.warning(
                 "reason timed out project=%s worker=%s execute_ms=%s total_ms=%s stdout_preview=%s stderr_preview=%s",

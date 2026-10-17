@@ -68,13 +68,13 @@ class InProcessClient:
     def create_finding(self, project_id: str, payload: dict[str, Any]) -> ApiResult:
         return self._post(f"/projects/{project_id}/findings", payload)
 
-    def heartbeat(self, project_id: str, intent_id: str, worker: str) -> ApiResult:
+    def heartbeat(self, project_id: str, intent_id: str, worker: str, *, request_timeout: float | None = None) -> ApiResult:
         return self._post(f"/projects/{project_id}/intents/{intent_id}/heartbeat", {"worker": worker})
 
     def claim_reason(self, project_id: str, worker: str, trigger: str) -> ApiResult:
         return self._post(f"/projects/{project_id}/reason/claim", {"worker": worker, "trigger": trigger})
 
-    def reason_heartbeat(self, project_id: str, worker: str, lease_id: str | None = None) -> ApiResult:
+    def reason_heartbeat(self, project_id: str, worker: str, lease_id: str | None = None, *, request_timeout: float | None = None) -> ApiResult:
         return self._post(f"/projects/{project_id}/reason/heartbeat", {"worker": worker, "lease_id": lease_id})
 
     def release_reason(self, project_id: str, worker: str, lease_id: str | None = None) -> ApiResult:

@@ -2,7 +2,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
 
-from board.server.db import get_conn
+from board.server.db import get_conn, get_read_conn
 from board.server.models import (
     AbortRequest,
     CompleteRequest,
@@ -54,8 +54,11 @@ router = APIRouter(tags=["projects"])
 @router.get("/projects", response_model=list[ProjectSummary])
 def list_projects():
     with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         expire_workers(conn)
         expire_reason_leases(conn)
+
+    with get_read_conn() as conn:
         rows = conn.execute("""
             SELECT p.*,
                 (SELECT COUNT(*) FROM facts WHERE project_id = p.id) AS fact_count,
@@ -129,8 +132,11 @@ def create_project(body: CreateProjectRequest):
 @router.get("/projects/{project_id}", response_model=ProjectDetail)
 def get_project(project_id: str):
     with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         expire_workers(conn, project_id)
         expire_reason_leases(conn, project_id)
+
+    with get_read_conn() as conn:
         row = get_project_or_404(conn, project_id)
 
         facts = conn.execute(
@@ -259,6 +265,7 @@ def abort_project_endpoint(project_id: str, body: AbortRequest):
 @router.post("/projects/{project_id}/reason/claim", response_model=ProjectMeta)
 def claim_project_reason(project_id: str, body: ReasonClaimRequest):
     with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         check_project_active(conn, project_id)
         expire_reason_leases(conn, project_id)
         row = get_project_or_404(conn, project_id)
@@ -313,6 +320,7 @@ def record_reason_wait(project_id: str, body: ReasonWaitRequest):
 @router.post("/projects/{project_id}/reason/heartbeat", response_model=ProjectMeta)
 def heartbeat_project_reason(project_id: str, body: ReasonHeartbeatRequest):
     with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         check_project_active(conn, project_id)
         expire_reason_leases(conn, project_id)
         row = get_project_or_404(conn, project_id)
@@ -336,6 +344,7 @@ def heartbeat_project_reason(project_id: str, body: ReasonHeartbeatRequest):
 @router.post("/projects/{project_id}/reason/release", response_model=ProjectMeta)
 def release_project_reason(project_id: str, body: ReasonHeartbeatRequest):
     with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         check_project_active(conn, project_id)
         expire_reason_leases(conn, project_id)
         row = get_project_or_404(conn, project_id)
