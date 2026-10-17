@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Any
 
 from board.skill_profiles import validate_skill_profile_ids
@@ -9,6 +10,18 @@ from board.dispatcher.output_parser import extract_json_object
 ALLOWED_FINDING_SEVERITIES = frozenset({"critical", "high", "medium", "low", "info", "negative"})
 MAX_FINDINGS_PER_FACT = 20
 MAX_JOBS_PER_CONCLUDE = 10
+
+
+class UnavailableSkillProfileError(ValueError):
+    """A model selected IDs outside this call's advertised profile choices."""
+
+    def __init__(self, intent_index: int, requested: list[str], allowed: Collection[str]):
+        self.intent_index = intent_index
+        self.unavailable_ids = [profile_id for profile_id in requested if profile_id not in allowed]
+        self.allowed_ids = sorted(allowed)
+        valid = ", ".join(self.allowed_ids) or "none (omit skill_profiles)"
+        super().__init__(f"intent at index {intent_index} requests unavailable skill profile IDs: "
+                         f"{', '.join(self.unavailable_ids)}. Valid profile IDs: {valid}.")
 
 
 def parse_json_output(stdout: str) -> dict[str, Any]:
@@ -148,6 +161,7 @@ def validate_optional_jobs(value: Any) -> list[dict[str, Any]]:
 
 def validate_reason_payload(
     payload: dict[str, Any], open_intents_empty: bool, max_intents: int,
+    *, allowed_skill_profiles: Collection[str] | None = None,
 ) -> tuple[str, dict[str, Any] | list[dict[str, Any]] | None]:
     accepted, data = _unwrap_wrapped_payload(payload)
     if accepted is False:
@@ -178,7 +192,9 @@ def validate_reason_payload(
             if not isinstance(intent, dict) or "from" not in intent or "description" not in intent:
                 raise ValueError(f"invalid intent at index {i}")
             if "skill_profiles" in intent:
-                validate_skill_profile_ids(intent["skill_profiles"])
+                requested = validate_skill_profile_ids(intent["skill_profiles"])
+                if allowed_skill_profiles is not None and any(profile_id not in allowed_skill_profiles for profile_id in requested):
+                    raise UnavailableSkillProfileError(i, requested, allowed_skill_profiles)
             priority = intent.get("priority")
             if priority is not None and (not isinstance(priority, int) or isinstance(priority, bool) or not 1 <= priority <= 100):
                 raise ValueError(f"intent at index {i}: priority must be an integer between 1 and 100")

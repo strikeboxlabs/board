@@ -5,9 +5,9 @@ import json
 import uuid
 import time
 
-from board.dispatcher.skills import prepare_pi_worker, profile_summaries
+from board.dispatcher.skills import available_skill_profiles, prepare_pi_worker, profile_summaries
 from board.dispatcher.config import DispatchConfig, WorkerConfig
-from board.dispatcher.contracts import parse_json_output, validate_reason_payload
+from board.dispatcher.contracts import UnavailableSkillProfileError, parse_json_output, validate_reason_payload
 from board.dispatcher.prompting import (
     with_execution_constraints,
     format_fact_ids,
@@ -117,6 +117,7 @@ def run_reason_task(
         )
         capacity = max(0, config.tasks.reason.target_open_intents - len(open_intents))
         max_intents = min(config.tasks.reason.max_intents, capacity)
+        available_profiles = available_skill_profiles(config.skills)
         prompt = render_prompt(
             load_prompt(config.runtime.prompt_group, "reason.md"),
             {
@@ -130,7 +131,7 @@ def run_reason_task(
                 "fact_ids": format_fact_ids(allowed_fact_ids),
                 "open_intents": format_open_intents(open_intents),
                 "max_intents": str(max_intents),
-                "skill_profiles": profile_summaries(config.skills),
+                "skill_profiles": profile_summaries(config.skills, available_profiles),
             },
         )
 
@@ -224,7 +225,13 @@ def run_reason_task(
             payload = parse_json_output(model_output)
             kind, data = validate_reason_payload(
                 payload, open_intents_empty=not open_intents, max_intents=max_intents,
+                allowed_skill_profiles=available_profiles.keys(),
             )
+        except UnavailableSkillProfileError as exc:
+            # IDs have already passed the bounded identifier syntax checks. Keep
+            # the diagnostic useful without dumping the raw model response.
+            LOG.warning("reason profile validation failed project=%s worker=%s error=%s", project.project.id, worker.name, exc)
+            return "failed"
         except Exception as exc:
             LOG.warning(
                 "reason parse failed project=%s worker=%s error=%s execute_ms=%s total_ms=%s stdout_preview=%s stderr_preview=%s",

@@ -54,9 +54,23 @@ explicit worker routing and profiles remain separate. Profile-bearing intents re
 a compatible Pi worker. Unknown, disabled or incompatible selections fail visibly.
 Existing clients and migrated intent rows default to an empty list.
 
-The planner receives short profile summaries and can request applicable IDs. The
-execution dispatcher resolves each selection before starting Pi. Empty intent IDs
-use worker.skill_profiles when configured, otherwise skills.default_profiles. Profiles
+The planner receives short profile summaries and can request applicable IDs. A
+single snapshot of enabled, resolvable, nonempty profile choices supplies both its
+prompt and response validation. Every proposed intent is checked against those
+same IDs before capacity truncation or any intent writes. An unavailable profile
+rejects the proposed batch with its intent index and the valid IDs; Board does
+not guess aliases, remove the selection or substitute another profile. Custom
+profiles remain valid when they resolve to supplied skills. With profiles disabled,
+explicit nonempty selections are rejected; omitted and empty selections retain
+their existing default behavior. This prevents unavailable IDs from entering a
+planner-created queue; it does not prove that a valid profile suits the task or
+satisfies its metadata budget, executable requirements or other prerequisites.
+
+The graph API validates ID syntax without resolving host-specific profiles; the
+dispatcher remains responsible for availability. The execution dispatcher also
+retains its resolution checks for existing and API-created intents before starting
+Pi. Empty intent IDs use worker.skill_profiles when configured, otherwise
+skills.default_profiles. Profiles
 select explicit library/name IDs through skills, OR-match catalog tags through tags,
 and compose parents through extends. Composition is additive, not a language filter
 on another profile. For an exact subset, define explicit skills or narrower task tags.
@@ -124,3 +138,50 @@ actual Pi 1.3 CLI against a localhost dummy model, never a real provider or scan
 This validates loading/session mechanics, not skill usefulness or vulnerability discovery.
 Matched no-skills/full-catalog/selected-profile worker evaluations remain a later on-host
 step using a controlled task and model budget.
+
+## Routing reliability follow-up plan
+
+The planner allowlist check above addresses nonexistent and unadvertised IDs. The
+following work is planned, not implemented by that check. Evaluate it with owned
+local fixtures and mocked workers, without dispatching existing project work.
+
+1. **Validate selections for the execution host before accepting work.** Share a
+   versioned availability result between the dispatcher and dashboard, so editors
+   can offer actual profile choices instead of only free-text IDs. Preserve the
+   graph API's host-independent format. Report incompatible worker constraints,
+   unavailable catalogs and changed catalog revisions separately; never invent an
+   alias or silently substitute profiles. Acceptance: a stale selection or a
+   profile with no compatible execution worker produces an explicit configuration
+   diagnostic before an execution attempt.
+2. **Preflight complete profile combinations.** Check explicit skill references,
+   inheritance, empty matches and the combined metadata estimate using the actual
+   snapshot path format. The present doctor checks the default selection's budget;
+   success does not certify every future combination. Acceptance: boundary tests
+   cover overlapping profiles, long snapshot paths, valid custom overrides and a
+   union that exceeds budget although each component fits separately.
+3. **Distinguish knowledge selection from tool readiness.** Review prerequisite
+   metadata incrementally and report ready, unavailable and unspecified states.
+   A read-only audit on 2026-10-17 found 553 installed catalog skills and no declared
+   executable requirements. This is unspecified readiness, not 553 missing tools.
+   Acceptance: missing commands and missing task-specific SDK/data prerequisites
+   remain distinguishable from an invalid profile or an unreadable skill package.
+4. **Test technology and task classification.** Use local source/configuration
+   fixtures to verify profile contents and make language descriptions unambiguous,
+   including C/C++ versus C#/.NET. A syntactically valid profile can still be the
+   wrong knowledge selection. The same audit found 512 entries explicitly marked
+   unreviewed; keep those out of automatic tag matching until reviewed rather than
+   loading the entire library as a fallback. Acceptance: fixture expectations show
+   both required inclusions and unrelated exclusions for each reviewed category.
+5. **Expose failure stage and required action.** Distinguish invalid planner output,
+   host configuration failure and an execution failure. Show the affected profile
+   and the relevant available choices or prerequisite, while redacting raw provider
+   output. Editing a profile must not imply that a durable execution-error latch
+   was cleared. Acceptance: UI and protocol tests preserve the distinction between
+   validation, configuration changes and explicit lifecycle decisions.
+
+The same audit found all 13 current built-in profiles nonempty, with individual
+source-path metadata estimates of 200–1850 tokens against a 6000-token budget and
+no doctor errors. Their complete union selects 41 distinct skills, estimated at
+4631 tokens using representative frozen-attempt paths; no current built-in budget
+overflow was found. Those measurements do not establish semantic suitability,
+prerequisite readiness, or the final cost for every possible snapshot path.

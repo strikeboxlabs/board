@@ -241,15 +241,33 @@ def metadata_characters(skills, paths=None):
     return len("\n".join(parts)) + (500 if parts else 0)
 
 
-def profile_summaries(settings: SkillsConfig) -> str:
+@dataclass(frozen=True)
+class AvailableSkillProfile:
+    description: str
+    skill_count: int
+
+
+def available_skill_profiles(settings: SkillsConfig) -> dict[str, AvailableSkillProfile]:
+    """Resolve the exact nonempty profile choices offered to one planner call."""
     if not settings.enabled:
-        return "Skill profiles are disabled on this dispatcher. Omit skill_profiles."
+        return {}
     catalog = load_catalogs(settings)
-    lines = ["Available trusted skill profiles (knowledge selection; task scope still applies):"]
+    available = {}
     for name, profile in settings.all_profiles().items():
         _, skills = resolve_skills(settings, catalog, [name])
         if skills:
-            lines.append(f"- {name}: {profile.description} ({len(skills)} skills)")
+            available[name] = AvailableSkillProfile(profile.description, len(skills))
+    return available
+
+
+def profile_summaries(settings: SkillsConfig, available: dict[str, AvailableSkillProfile] | None = None) -> str:
+    if not settings.enabled:
+        return "Skill profiles are disabled on this dispatcher. Omit skill_profiles."
+    if available is None:
+        available = available_skill_profiles(settings)
+    lines = ["Available trusted skill profiles (knowledge selection; task scope still applies):"]
+    for name, profile in available.items():
+        lines.append(f"- {name}: {profile.description} ({profile.skill_count} skills)")
     lines.append("Request only applicable IDs in skill_profiles; combine profiles for mixed tasks. "
                  "Profiles are delivered to Pi workers. A missing profile is a coverage gap, not proof of absence.")
     return "\n".join(lines)

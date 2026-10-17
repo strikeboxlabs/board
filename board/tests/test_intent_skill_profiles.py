@@ -13,6 +13,7 @@ from board.dispatcher.runtime.cancellation import TaskCancellation
 from board.dispatcher.runtime.process import ProcessResult
 from board.dispatcher.scheduler.reason_gate import graph_signature
 from board.dispatcher.tasks import reason
+from board.dispatcher.skills import AvailableSkillProfile
 from board.server import db
 from board.server.app import app
 from board.skill_profiles import validate_skill_profile_ids
@@ -146,12 +147,16 @@ def test_protocol_client_preserves_requested_profiles(monkeypatch):
 
 def test_reason_forwards_profile_requests_without_changing_worker_routing(monkeypatch):
     config = make_config()
+    config.skills.enabled = True
     project = make_project()
     client = FakeClient(project)
     containers = FakeContainerManager()
     driver = FakeDriver()
     lease = FakeLease()
     monkeypatch.setattr(reason, "get_driver", lambda *_a, **_k: driver)
+    monkeypatch.setattr(reason, "available_skill_profiles", lambda *_: {
+        "source-analysis": AvailableSkillProfile("Inspect the supplied fixture.", 1),
+    })
     monkeypatch.setattr(reason.HeartbeatLease, "for_reason", lambda *_a, **_k: lease)
     monkeypatch.setattr(reason, "run_worker_process", lambda *_a, **_k: ProcessResult(0, json.dumps({
         "accepted": True, "data": {"intents": [{"from": ["f001"], "description": "Inspect local fixture", "skill_profiles": ["source-analysis"]}]},
