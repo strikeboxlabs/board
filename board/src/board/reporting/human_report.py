@@ -1,7 +1,7 @@
 """Human report renderer — readable delivery document.
 
 Sections: executive summary, findings by severity, methodology timeline,
-negative results & coverage, open questions, evidence manifest appendix.
+negative results & coverage, open questions, disposition history and evidence appendices.
 """
 
 from __future__ import annotations
@@ -24,10 +24,12 @@ def render_human_report(
     header = report["header"]
     root = Path(evidence_root).expanduser()
 
-    findings = report["findings"]
+    retired_statuses = {"false_positive", "mitigated"}
+    findings = [f for f in report["findings"] if f.get("status") not in retired_statuses]
+    retired_findings = [f for f in report["findings"] if f.get("status") in retired_statuses]
     counts = Counter(f["severity"] or "info" for f in findings)
     vuln_findings = [f for f in findings if f["severity"] != "negative"]
-    negative_findings = report["negative_results"]
+    negative_findings = [f for f in findings if f["severity"] == "negative"]
 
     lines: list[str] = []
     lines.append(f"# Security Assessment Report — {header['title']}")
@@ -57,13 +59,13 @@ def render_human_report(
         lines.append("")
         lines.append(f"**Origin.** {origin}")
     lines.append("")
-    lines.append("**Results by severity.**")
+    lines.append("**Current results by severity.** False positives and mitigated findings are excluded; their records are preserved in the disposition history appendix.")
     lines.append("")
     lines.append("| Severity | Count |")
     lines.append("|---|---|")
     for severity in ("critical", "high", "medium", "low", "info"):
         lines.append(f"| {severity} | {counts.get(severity, 0)} |")
-    lines.append(f"| negative (tested, found solid) | {counts.get('negative', 0)} |")
+    lines.append(f"| negative (recorded) | {counts.get('negative', 0)} |")
     lines.append("")
     aborted = header.get("status") == "aborted"
     if aborted:
@@ -76,13 +78,19 @@ def render_human_report(
         )
     elif counts.get("critical", 0) or counts.get("high", 0):
         label = "**Overall posture.**"
-        posture = "The assessment identified severe issues that require immediate attention."
+        posture = "Current records include high or critical severity findings; review their status and supporting evidence."
     elif counts.get("medium", 0) or counts.get("low", 0):
         label = "**Overall posture.**"
-        posture = "The assessment identified issues worth addressing; no severe exposure was confirmed."
+        posture = "Current records include issues for review and remediation; see section 2 for their status and evidence."
     elif negative_findings:
         label = "**Overall posture.**"
-        posture = "No exploitable weaknesses were confirmed within the tested scope; several areas were explicitly verified as solid."
+        posture = "Negative results were recorded; see section 4 for their status and verification limits."
+    elif vuln_findings:
+        label = "**Overall posture.**"
+        posture = "The assessment recorded informational findings; see section 2 for details."
+    elif retired_findings:
+        label = "**Overall posture.**"
+        posture = "No current findings remain; prior findings and their dispositions are preserved in the history appendix."
     else:
         label = "**Overall posture.**"
         posture = "No structured findings were recorded for this run; see the methodology timeline for what was examined."
@@ -92,27 +100,10 @@ def render_human_report(
     lines.append("## 2. Findings by severity")
     lines.append("")
     if not vuln_findings:
-        lines.append("_No vulnerability-class findings recorded._")
+        lines.append("_No current vulnerability-class findings recorded._")
         lines.append("")
     for finding in vuln_findings:
-        lines.append(f"### [{(finding['severity'] or 'info').upper()}] {finding['title']}")
-        lines.append("")
-        meta = [f"`{finding['id']}`"]
-        if finding.get("affected_target"):
-            meta.append(f"target: `{finding['affected_target']}`")
-        if finding.get("category"):
-            meta.append(f"category: {finding['category']}")
-        meta.append(f"status: {finding.get('status') or 'open'}")
-        lines.append(" · ".join(meta))
-        lines.append("")
-        lines.append(finding["description"])
-        lines.append("")
-        if finding.get("recommendation"):
-            lines.append(f"**Recommendation.** {finding['recommendation']}")
-            lines.append("")
-        if finding.get("evidence_ids"):
-            lines.append(f"**Evidence.** {', '.join(f'`{e}`' for e in finding['evidence_ids'])} (see appendix)")
-            lines.append("")
+        _append_finding(lines, finding)
 
     lines.append("## 3. Methodology timeline")
     lines.append("")
@@ -123,13 +114,14 @@ def render_human_report(
 
     lines.append("## 4. Negative results & coverage")
     lines.append("")
-    lines.append("Areas that were tested and found solid. These are first-class results: they document coverage and prevent unnecessary re-testing.")
+    lines.append("Recorded observations of absence of weakness, with their current status. Blocked results and results needing retest do not establish verified coverage.")
     lines.append("")
     if not negative_findings:
-        lines.append("_No negative results recorded._")
+        lines.append("_No current negative results recorded._")
     for finding in negative_findings:
         target = f" — `{finding['affected_target']}`" if finding.get("affected_target") else ""
-        lines.append(f"- **{finding['title']}**{target}: {finding['description']}")
+        status = finding.get("status") or "open"
+        lines.append(f"- **{finding['title']}**{target} (`{finding['id']}`, status: {status}): {finding['description']}")
     lines.append("")
 
     lines.append("## 5. Open questions & blocked paths")
@@ -144,6 +136,16 @@ def render_human_report(
             worker = f", last worker: {intent['worker']}" if intent.get("worker") else ""
             lines.append(f"- `{intent['id']}` (declared {intent['declared_at']}{worker}): {intent['description']}")
     lines.append("")
+
+    lines.append("## Appendix: disposition history")
+    lines.append("")
+    lines.append("False positives and mitigated findings are retained here for traceability. They do not contribute to current severity counts, posture, or coverage conclusions.")
+    lines.append("")
+    if not retired_findings:
+        lines.append("_No retired findings recorded._")
+        lines.append("")
+    for finding in retired_findings:
+        _append_finding(lines, finding)
 
     lines.append("## Appendix: evidence manifest")
     lines.append("")
@@ -162,3 +164,24 @@ def render_human_report(
             )
     lines.append("")
     return "\n".join(lines)
+
+
+def _append_finding(lines: list[str], finding: dict) -> None:
+    lines.append(f"### [{(finding['severity'] or 'info').upper()}] {finding['title']}")
+    lines.append("")
+    meta = [f"`{finding['id']}`"]
+    if finding.get("affected_target"):
+        meta.append(f"target: `{finding['affected_target']}`")
+    if finding.get("category"):
+        meta.append(f"category: {finding['category']}")
+    meta.append(f"status: {finding.get('status') or 'open'}")
+    lines.append(" · ".join(meta))
+    lines.append("")
+    lines.append(finding["description"])
+    lines.append("")
+    if finding.get("recommendation"):
+        lines.append(f"**Recommendation.** {finding['recommendation']}")
+        lines.append("")
+    if finding.get("evidence_ids"):
+        lines.append(f"**Evidence.** {', '.join(f'`{e}`' for e in finding['evidence_ids'])} (see appendix)")
+        lines.append("")

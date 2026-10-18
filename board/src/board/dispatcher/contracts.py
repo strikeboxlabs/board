@@ -8,6 +8,7 @@ from board.skill_profiles import validate_skill_profile_ids
 from board.dispatcher.output_parser import extract_json_object
 
 ALLOWED_FINDING_SEVERITIES = frozenset({"critical", "high", "medium", "low", "info", "negative"})
+ALLOWED_FINDING_STATUSES = frozenset({"open", "confirmed", "mitigated", "false_positive", "needs_retest", "blocked"})
 MAX_FINDINGS_PER_FACT = 20
 MAX_JOBS_PER_CONCLUDE = 10
 
@@ -86,7 +87,8 @@ def _looks_like_explore_data(payload: dict[str, Any]) -> bool:
 def validate_optional_findings(value: Any) -> list[dict[str, Any]]:
     """Validate the optional structured-findings array a worker may return with a fact.
 
-    Each entry needs at least a title; severity defaults to ``info``. Entries are
+    Each entry needs at least a title; severity defaults to ``info``. An explicit
+    status is preserved; otherwise the API defaults to ``open``. Entries are
     normalised so the dispatcher can POST them straight to the findings API.
     """
     if value is None:
@@ -108,6 +110,13 @@ def validate_optional_findings(value: Any) -> list[dict[str, Any]]:
                 f"findings[{index}].severity must be one of: {', '.join(sorted(ALLOWED_FINDING_SEVERITIES))}"
             )
         entry: dict[str, Any] = {"title": title.strip(), "severity": severity}
+        if "status" in item:
+            status = item["status"]
+            if not isinstance(status, str) or status not in ALLOWED_FINDING_STATUSES:
+                raise ValueError(
+                    f"findings[{index}].status must be one of: {', '.join(sorted(ALLOWED_FINDING_STATUSES))}"
+                )
+            entry["status"] = status
         for key in ("category", "affected_target", "description", "recommendation"):
             text = item.get(key)
             if isinstance(text, str) and text.strip():

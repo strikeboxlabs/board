@@ -41,8 +41,10 @@ Normal return example:
 The environment variable `BOARD_EVIDENCE_DIR` holds a durable evidence directory for this task. Write EVERY artefact you produce or capture (helper scripts, HTTP captures, scan output, screenshots, findings files) to `$BOARD_EVIDENCE_DIR` — never to `/tmp` or any other self-chosen path, which will not survive the run. Reference the files by their `$BOARD_EVIDENCE_DIR/...` path in `description` so every fact is backed by retrievable proof.
 
 # Structured Findings
-- Optionally include a `findings` array alongside `description` (as in the example above) so results can be sorted, severity-ranked and deduplicated.
-- Each finding needs at least `title` and `severity`; `severity` is one of `critical`, `high`, `medium`, `low`, `info`, `negative`. Optional fields: `category`, `affected_target`, `description`, `recommendation`.
+- Optionally include a `findings` array alongside `description` (as in the example above) to record results with severity and disposition.
+- Each finding needs at least `title` and `severity`; `severity` is one of `critical`, `high`, `medium`, `low`, `info`, `negative`. Optional fields: `status`, `category`, `affected_target`, `description`, `recommendation`.
+- `status` is one of `open` (default), `confirmed`, `mitigated`, `false_positive`, `needs_retest`, `blocked`. Use `false_positive` for a rejected candidate, `mitigated` for a verified fix, and `needs_retest` or `blocked` for unresolved verification. Rejected and mitigated records remain in report history, outside the human report's current severity totals.
+- Each entry creates a new record; it does not update, retract, or deduplicate an earlier finding. Avoid repeating existing findings. Identify earlier finding IDs requiring review in `description` when supplied; otherwise cite the source fact and affected target.
 - Use severity `negative` for documented absence of weakness (e.g. a CVE verified as patched, a hardened configuration, an attack surface confirmed closed) — proven-solid areas are first-class results worth recording.
 
 # Output example (with optional findings and jobs)

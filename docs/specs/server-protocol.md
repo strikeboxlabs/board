@@ -920,6 +920,8 @@ List structured findings sorted by severity (critical → high → medium → lo
 
 Create a finding. `fact_id` must exist. `severity` is one of `critical|high|medium|low|info|negative` (default `info`); `status` is one of `open|confirmed|mitigated|false_positive|needs_retest|blocked` (default `open`). `evidence_ids` is an array of evidence IDs forming the evidence chain.
 
+The human report excludes `false_positive` and `mitigated` records from current severity totals and displays them in finding disposition history. Unresolved `needs_retest` and `blocked` records remain current. The findings API and agent report retain all records. Worker findings preserve an explicit supported status; a new finding does not retract or replace an earlier record.
+
 #### PUT /projects/{project_id}/findings/{finding_id}
 
 Partially update a finding (`status`, `severity`, `recommendation`, `evidence_ids`, and other fields), automatically refreshing `updated_at`.
