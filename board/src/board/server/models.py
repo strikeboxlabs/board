@@ -6,13 +6,26 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 from board.skill_profiles import validate_skill_profile_ids
+from board.dispatch_settings import DispatchOverrides, MAX_HEARTBEAT_TIMEOUT
 
 IntentWorkerType = Literal["pi", "codex", "claudecode", "mock"]
 
 
 class Settings(BaseModel):
-    intent_timeout: int = Field(ge=5)
-    reason_timeout: int = Field(ge=5)
+    file_revision: str | None = Field(default=None, min_length=1, max_length=128)
+    dispatch: DispatchOverrides = Field(default_factory=DispatchOverrides)
+    intent_timeout: int = Field(ge=5, le=MAX_HEARTBEAT_TIMEOUT, strict=True)
+    reason_timeout: int = Field(ge=5, le=MAX_HEARTBEAT_TIMEOUT, strict=True)
+
+
+class SettingsSnapshot(BaseModel):
+    """Readable even when settings saved by an older version are now invalid."""
+    intent_timeout: int
+    reason_timeout: int
+    dispatch: dict = Field(default_factory=dict)
+    validation_errors: list[str] = Field(default_factory=list)
+    limits: dict = Field(default_factory=dict)
+    file_revision: str | None = None
 
 
 class Fact(BaseModel):

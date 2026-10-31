@@ -311,6 +311,7 @@ def _loop(config: DispatchConfig, client: InProcessClient, containers: LocalCont
     loop.client = client
     loop.container_manager = containers
     loop.executor = ThreadPoolExecutor(max_workers=config.runtime.max_workers)
+    loop._retired_executors = []
     loop.cleanup_executor = ThreadPoolExecutor(max_workers=1)
     loop.futures = {}
     loop.cleanup_futures = {}
@@ -530,7 +531,7 @@ def _failover_config() -> DispatchConfig:
         return {
             "name": name,
             "type": "mock",
-            "task_types": ["bootstrap", "reason", "explore"],
+            "task_types": ["bootstrap", "reason", "explore"] if name == "bad" else [],
             "max_running": 1,
             "priority": priority,
             "env": {
@@ -567,7 +568,7 @@ def _failover_config() -> DispatchConfig:
     )
 
 
-def test_unhealthy_worker_fails_over_to_healthy_worker(http_client: TestClient) -> None:
+def test_unhealthy_worker_waits_for_operator_to_select_replacement(http_client: TestClient) -> None:
     client = InProcessClient(http_client)
     containers = LocalContainerManager()
     loop = _loop(_failover_config(), client, containers)
@@ -579,7 +580,12 @@ def test_unhealthy_worker_fails_over_to_healthy_worker(http_client: TestClient) 
         assert "bad" in loop.worker_unhealthy_until
         assert client.get_project(project_id).project.status == "active"
 
-        # round 2: 'bad' still cooling down -> 'good' takes over and completes the project
+        # A single selected model must not silently fall back to another model.
+        loop._dispatch_available(client.list_projects())
+        assert not loop.futures
+        assert client.get_project(project_id).project.status == "active"
+        loop._routing = {task: ["good"] for task in ("bootstrap", "reason", "explore")}
+        # An explicit operator selection enables the registered standby worker.
         _dispatch_and_wait(loop)
         project = client.get_project(project_id)
     finally:

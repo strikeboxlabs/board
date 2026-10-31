@@ -509,6 +509,8 @@ def test_intent_assignment_round_trip(client: TestClient) -> None:
 
 def _pin_loop(workers: list) -> DispatcherLoop:
     loop = _loop()
+    # Scheduler-only fixture: registered fake CLIs do not need host binaries.
+    loop._worker_availability = lambda *_: {"available": True, "unavailable_reason": None}
     config = make_config()
     loop.config = config.model_copy(update={"workers": workers})
     loop.futures = {}

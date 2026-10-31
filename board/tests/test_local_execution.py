@@ -230,7 +230,7 @@ def _local_payload() -> dict:
         },
         "workers": [
             {"name": "local-claude", "type": "claudecode", "task_types": ["explore"], "max_running": 1, "priority": 0},
-            {"name": "local-codex", "type": "codex", "task_types": ["explore"], "max_running": 1, "priority": 1},
+            {"name": "local-codex", "type": "codex", "task_types": [], "max_running": 1, "priority": 1},
             {"name": "local-pi", "type": "pi", "task_types": ["reason"], "max_running": 1, "priority": 2},
         ],
     }

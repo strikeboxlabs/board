@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import shutil
 import subprocess
@@ -10,7 +11,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
+import yaml
+from pydantic import ValidationError
 
+from board.dispatch_settings import validate_dispatch_overrides, validate_heartbeat_timeouts, validation_messages
 from board.dispatcher.config import DispatchConfig, LocalConfig, WorkerConfig
 from board.dispatcher.models import ReasonCheckpoint, RunningTask
 from board.dispatcher.protocol.client import BoardClient
@@ -27,7 +31,7 @@ from board.dispatcher.tasks.bootstrap import run_bootstrap_task
 from board.dispatcher.tasks.common import persist_project_reports
 from board.dispatcher.tasks.explore import run_explore_task
 from board.dispatcher.tasks.reason import run_reason_task
-from board.server.models import Intent, ProjectDetail, ProjectSummary
+from board.server.models import DispatchOverrides, Intent, ProjectDetail, ProjectSummary, Settings, SettingsSnapshot
 
 LOG = logging.getLogger(__name__)
 UNHEALTHY_RETRY_AFTER_SECONDS = 5
@@ -52,7 +56,18 @@ class WorkerSelection:
 class DispatcherLoop:
     def __init__(self, config_path: Path):
         self.config_path = config_path
-        self.config = DispatchConfig.load(config_path)
+        self.config, self._config_stamp = self._load_config_snapshot()
+        self._file_config = self.config
+        self._file_revision = self._revision_for(self._config_stamp)
+        self._file_error: str | None = None
+        self._reload_error: str | None = None
+        self._server_settings: Settings | SettingsSnapshot | None = None
+        self._heartbeat_interval_ceiling = self.config.runtime.interval
+        self._applied_overrides = DispatchOverrides()
+        self._routing: dict[str, list[str]] = {}
+        self._retired_executors: list[ThreadPoolExecutor] = []
+        self._last_effective_report: dict | None = None
+        self._last_effective_report_at = 0.0
         if self.config.skills.enabled:
             from board.dispatcher.skills import doctor
             skill_report = doctor(self.config.skills)
@@ -91,6 +106,180 @@ class DispatcherLoop:
         self._job_stop_futures = {}
         self._job_stop_results = {}
 
+    def _file_stamp(self) -> tuple[int, int, int, int]:
+        stat = self.config_path.stat()
+        return (stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
+
+    def _revision_for(self, stamp: tuple[int, ...]) -> str:
+        # ctime detects restoring identical bytes even if cp preserves mtime.
+        identity = f"{self.config_path.resolve()}:{stamp}"
+        return hashlib.sha256(identity.encode()).hexdigest()
+
+    def _load_config_snapshot(self) -> tuple[DispatchConfig, tuple[int, ...]]:
+        for _ in range(3):
+            stamp = self._file_stamp()
+            config = DispatchConfig.load(self.config_path)
+            if stamp == self._file_stamp():
+                return config, stamp
+        raise ValueError("dispatch.yaml changed while being validated; retrying on the next tick")
+
+    def _reload_file_config(self, settings: Settings) -> None:
+        try:
+            stamp = self._file_stamp()
+            if stamp != self._config_stamp:
+                self._config_stamp = stamp
+                candidate, stamp = self._load_config_snapshot()
+                self._config_stamp = stamp
+                # These objects own connections and storage used by active tasks.
+                for key in ("server", "container", "local"):
+                    if getattr(candidate, key) != getattr(self._file_config, key):
+                        raise ValueError(f"{key} changes require a dispatcher restart")
+                if candidate.runtime.execution != self._file_config.runtime.execution:
+                    raise ValueError("execution mode changes require a dispatcher restart")
+                if candidate.runtime.interval >= min(settings.intent_timeout, settings.reason_timeout):
+                    raise ValueError("runtime.interval must be less than both server heartbeat leases")
+                validate_dispatch_overrides(DispatchOverrides(), self._public_config(candidate))
+                self._file_config = candidate
+                self._file_revision = self._revision_for(stamp)
+                self._file_error = None
+                self._clear_log_state("config/file")
+                LOG.info("validated updated dispatcher configuration")
+        except (OSError, ValueError, yaml.YAMLError) as exc:
+            # ValidationError and YAML diagnostics normally include raw input,
+            # which can contain provider credentials. Report locations instead.
+            if isinstance(exc, ValidationError):
+                detail = "; ".join(
+                    f"{'.'.join(map(str, error['loc'])) or 'config'}: {error['msg']}"
+                    for error in exc.errors(include_input=False, include_context=False, include_url=False)
+                )
+            elif isinstance(exc, yaml.YAMLError):
+                mark = getattr(exc, "problem_mark", None)
+                detail = f"invalid YAML at line {mark.line + 1}" if mark else "invalid YAML"
+            else:
+                detail = str(exc)
+            self._file_error = f"File reload rejected; previous file configuration retained: {detail}"
+            self._log_changed("config/file", logging.ERROR, "%s", self._file_error)
+
+    def _refresh_config(self) -> None:
+        poll_error = None
+        try:
+            settings = self.client.get_settings()
+            if not self._settings_checked:
+                self._validate_server_settings(settings)
+                self._settings_checked = True
+            self._server_settings = settings.model_copy(deep=True)
+            self._clear_log_state("config/settings")
+        except (requests.RequestException, ValidationError):
+            if self._server_settings is None:
+                raise
+            poll_error = "Settings poll failed; using last valid server overrides"
+            self._log_changed("config/settings", logging.WARNING, "%s", poll_error)
+        assert self._server_settings is not None
+        self._reload_file_config(self._server_settings)
+        candidate = self._file_config.model_copy(deep=True)
+        source_changed = self._server_settings.file_revision != self._file_revision
+        override_error = None
+        try:
+            raw = self._server_settings.model_dump(include={"intent_timeout", "reason_timeout", "dispatch"})
+            if source_changed:
+                # Never apply controls saved against an older file, even for
+                # one tick while the report clearing them is still in flight.
+                raw["dispatch"] = {}
+                self._applied_overrides = DispatchOverrides()
+                self._routing = {}
+            checked = Settings.model_validate(raw)
+            overrides = checked.dispatch
+            context = self._public_config(candidate)
+            context["heartbeat_interval"] = max(candidate.runtime.interval, getattr(self, "_heartbeat_interval_ceiling", candidate.runtime.interval))
+            validate_dispatch_overrides(overrides, context)
+            validate_heartbeat_timeouts(checked.intent_timeout, checked.reason_timeout, context)
+            for worker in candidate.workers:
+                worker.max_running = overrides.worker_max_running.get(worker.name, worker.max_running)
+            for task in ("reason", "explore"):
+                timeout = getattr(overrides, f"{task}_execution_timeout")
+                if timeout is not None:
+                    getattr(candidate.tasks, task).timeout = timeout
+            self._applied_overrides = overrides.model_copy(deep=True)
+            self._routing = self._applied_overrides.routing
+            self._clear_log_state("config/overrides")
+        except ValueError as exc:
+            detail = "; ".join(validation_messages(exc)) if isinstance(exc, ValidationError) else str(exc)
+            override_error = f"Dispatch overrides rejected; last effective configuration retained: {detail}"
+            self._log_changed("config/overrides", logging.ERROR, "%s", override_error)
+            candidate = self._file_config if source_changed else self.config
+        if candidate.runtime.max_workers != self.config.runtime.max_workers:
+            previous = self.executor
+            self.executor = ThreadPoolExecutor(max_workers=candidate.runtime.max_workers)
+            previous.shutdown(wait=False)
+            self._retired_executors.append(previous)
+        if candidate != self.config:
+            # Tasks already submitted retain their original config and worker
+            # objects. A smaller limit only prevents new dispatches until drained.
+            self.config = candidate
+            self.reason_gate.config = candidate.tasks.reason
+            LOG.info("applied updated dispatcher configuration")
+        self._reload_error = "; ".join(filter(None, (self._file_error, override_error, poll_error))) or None
+        previous_interval = getattr(self, "_heartbeat_interval_ceiling", self.config.runtime.interval)
+        self._heartbeat_interval_ceiling = (max(previous_interval, self.config.runtime.interval)
+                                           if any(not f.done() for f in self.futures) else self.config.runtime.interval)
+        if self._retired_executors and all(future.done() for future in self.futures):
+            for executor in self._retired_executors:
+                executor.shutdown(wait=True)
+            self._retired_executors.clear()
+        self._report_effective_config()
+
+    @staticmethod
+    def _worker_availability(config: DispatchConfig, worker: WorkerConfig) -> dict:
+        if config.runtime.execution == "local":
+            binary = get_driver(worker.type, "local").local_binary()
+            if binary and shutil.which(binary) is None:
+                return {"available": False, "unavailable_reason": f"{binary} CLI is not installed on the dispatcher host"}
+        return {"available": True, "unavailable_reason": None}
+
+    @staticmethod
+    def _public_config(config: DispatchConfig) -> dict:
+        # Only publish operator controls: worker env may contain credentials.
+        return {
+            "runtime": config.runtime.model_dump(), "tasks": config.tasks.model_dump(),
+            "workers": [{"name": w.name, "type": w.type, "task_types": w.task_types,
+                         "max_running": w.max_running, "priority": w.priority,
+                         **DispatcherLoop._worker_availability(config, w)} for w in config.workers],
+        }
+
+    def _report_effective_config(self) -> None:
+        payload = {
+            **self._public_config(self.config),
+            "routing": {task: [w.name for w in self.config.workers
+                               if self._route_allows(w, task, False)]
+                        for task in ("bootstrap", "reason", "explore")},
+            "file_defaults": self._public_config(self._file_config),
+            "applied_overrides": self._applied_overrides.model_dump(),
+            "heartbeat_interval": self._heartbeat_interval_ceiling,
+            "file_revision": self._file_revision,
+            "error": self._reload_error,
+        }
+        now = time.monotonic()
+        # Changes are reported immediately. Unchanged configs need only a
+        # liveness report, avoiding a database write every scheduler tick.
+        if payload == self._last_effective_report and now - self._last_effective_report_at < 30:
+            return
+        try:
+            self.client.report_effective(payload)
+        except requests.RequestException:
+            self._log_changed("config/report", logging.WARNING, "effective configuration report failed; will retry")
+            return
+        self._clear_log_state("config/report")
+        self._last_effective_report = payload
+        self._last_effective_report_at = now
+
+    def _route_allows(self, worker: WorkerConfig, task_type: str, pinned: bool) -> bool:
+        routing = getattr(self, "_routing", {})
+        if task_type in routing:
+            if worker.name in routing[task_type]:
+                return True
+            return pinned and task_type in worker.task_types
+        return task_type in worker.task_types
+
     def close(self) -> None:
         if self.futures:
             LOG.info(
@@ -99,6 +288,8 @@ class DispatcherLoop:
                 sorted({task.project_id for task in self.futures.values()}),
             )
         self.executor.shutdown(wait=True)
+        for executor in self._retired_executors:
+            executor.shutdown(wait=True)
         self.cleanup_executor.shutdown(wait=True)
         self.container_manager.close()
         self.client.close()
@@ -108,9 +299,7 @@ class DispatcherLoop:
             self.run_startup_healthchecks()
             while True:
                 try:
-                    if not self._settings_checked:
-                        self._validate_server_settings()
-                        self._settings_checked = True
+                    self._refresh_config()
                     self._reap_futures()
                     self._reap_cleanup_futures()
                     summaries = self.client.list_projects()
@@ -363,7 +552,8 @@ class DispatcherLoop:
                     continue
                 if (intent.assigned_worker or intent.assigned_worker_type or intent.skill_profiles) and not self._worker_available(
                     summary.id, intent.assigned_worker, "explore",
-                    required_type="pi" if intent.skill_profiles else intent.assigned_worker_type
+                    required_type="pi" if intent.skill_profiles else intent.assigned_worker_type,
+                    pinned=bool(intent.assigned_worker or intent.assigned_worker_type),
                 ):
                     pinned_waiting.append(intent.id)
                     continue
@@ -579,6 +769,7 @@ class DispatcherLoop:
             "explore",
             required_worker=intent.assigned_worker,
             required_type="pi" if intent.skill_profiles else intent.assigned_worker_type,
+            pinned=bool(intent.assigned_worker or intent.assigned_worker_type),
         )
         worker = selection.worker
         if worker is None:
@@ -653,17 +844,21 @@ class DispatcherLoop:
         return True
 
     def _worker_available(
-        self, project_id: str, worker_name: str | None, task_type: str, required_type: str | None = None
+        self, project_id: str, worker_name: str | None, task_type: str, required_type: str | None = None,
+        *, pinned: bool | None = None,
     ) -> bool:
         """Whether any worker matching the routing constraints has a free slot."""
         now = time.time()
+        pinned = bool(worker_name or required_type) if pinned is None else pinned
         running_counts = self._worker_counts()
         for worker in self.config.workers:
             if worker_name is not None and worker.name != worker_name:
                 continue
             if required_type is not None and worker.type != required_type:
                 continue
-            if task_type not in worker.task_types:
+            if not self._route_allows(worker, task_type, pinned):
+                continue
+            if not self._worker_availability(self.config, worker)["available"]:
                 continue
             if running_counts.get(worker.name, 0) >= worker.max_running:
                 continue
@@ -675,9 +870,11 @@ class DispatcherLoop:
         return False
 
     def _select_worker(
-        self, project_id: str, task_type: str, required_worker: str | None = None, required_type: str | None = None
+        self, project_id: str, task_type: str, required_worker: str | None = None, required_type: str | None = None,
+        *, pinned: bool | None = None,
     ) -> WorkerSelection:
         now = time.time()
+        pinned = bool(required_worker or required_type) if pinned is None else pinned
         candidates: list[WorkerConfig] = []
         blocked_busy: list[str] = []
         blocked_unhealthy: list[str] = []
@@ -689,8 +886,11 @@ class DispatcherLoop:
                 continue
             if required_type is not None and worker.type != required_type:
                 continue
-            if task_type not in worker.task_types:
+            if not self._route_allows(worker, task_type, pinned):
                 blocked_task_type.append(worker.name)
+                continue
+            if not self._worker_availability(self.config, worker)["available"]:
+                blocked_unhealthy.append(f"{worker.name}(not configured)")
                 continue
             running = running_counts.get(worker.name, 0)
             if running >= worker.max_running:
@@ -811,7 +1011,8 @@ class DispatcherLoop:
         bootstrap = self._get_bootstrap_intent(project)
         if bootstrap is not None:
             return not bootstrap.excluded
-        return any("bootstrap" in worker.task_types for worker in self.config.workers)
+        return ("bootstrap" in getattr(self, "_routing", {})
+                or any("bootstrap" in worker.task_types for worker in self.config.workers))
 
     def _create_bootstrap_intent(self, project_id: str) -> Intent | None:
         response = self.client.create_intent(
@@ -1156,7 +1357,7 @@ class DispatcherLoop:
                 return "Intent skill profiles require Pi, conflicting with the human worker-type assignment. Dispatch is stopped."
         if not intent.assigned_worker and not intent.assigned_worker_type and not intent.skill_profiles:
             return None
-        matching = [w for w in self.config.workers if "explore" in w.task_types
+        matching = [w for w in self.config.workers if self._route_allows(w, "explore", True)
                     and (not intent.assigned_worker or w.name == intent.assigned_worker)
                     and (not intent.assigned_worker_type or w.type == intent.assigned_worker_type)
                     and (not intent.skill_profiles or w.type == "pi")]
@@ -1389,8 +1590,9 @@ class DispatcherLoop:
             if scope.startswith(prefix):
                 self._log_state.pop(scope, None)
 
-    def _validate_server_settings(self) -> None:
-        settings = self.client.get_settings()
+    def _validate_server_settings(self, settings: Settings | None = None) -> None:
+        if settings is None:
+            settings = self.client.get_settings()
         interval = self.config.runtime.interval
         for name, value in (("intent_timeout", settings.intent_timeout), ("reason_timeout", settings.reason_timeout)):
             if value <= interval:

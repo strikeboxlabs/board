@@ -9,7 +9,7 @@ from pydantic import TypeAdapter
 import requests
 from requests.adapters import HTTPAdapter
 
-from board.server.models import Intent, ProjectDetail, ProjectSummary, Settings
+from board.server.models import Intent, ProjectDetail, ProjectSummary, SettingsSnapshot
 
 LOG = logging.getLogger(__name__)
 
@@ -68,10 +68,14 @@ class BoardClient:
         response.raise_for_status()
         return ProjectDetail.model_validate(response.json())
 
-    def get_settings(self) -> Settings:
+    def report_effective(self, payload: dict) -> None:
+        response = self._session().put(self._url("/settings/effective"), json=payload, timeout=self._timeout)
+        response.raise_for_status()
+
+    def get_settings(self) -> SettingsSnapshot:
         response = self._session().get(self._url("/settings"), timeout=self._timeout)
         response.raise_for_status()
-        return Settings.model_validate(response.json())
+        return SettingsSnapshot.model_validate(response.json())
 
     def export_project(self, project_id: str, format: str = "yaml") -> str:
         response = self._session().get(

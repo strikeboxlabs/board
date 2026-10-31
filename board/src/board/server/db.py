@@ -16,10 +16,16 @@ _db_path: Path | None = None
 SCHEMA = """\
 CREATE TABLE IF NOT EXISTS settings (
     intent_timeout INTEGER NOT NULL DEFAULT 15,
-    reason_timeout INTEGER NOT NULL DEFAULT 15
+    reason_timeout INTEGER NOT NULL DEFAULT 15,
+    dispatch TEXT NOT NULL DEFAULT '{}'
 );
 
 INSERT OR IGNORE INTO settings (rowid, intent_timeout, reason_timeout) VALUES (1, 15, 15);
+
+CREATE TABLE IF NOT EXISTS dispatch_effective (
+    id INTEGER PRIMARY KEY CHECK(id = 1),
+    payload TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY,
@@ -159,6 +165,8 @@ def configure(path: Path) -> None:
     _db_path.parent.mkdir(parents=True, exist_ok=True)
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+        if "dispatch" not in {row["name"] for row in conn.execute("PRAGMA table_info(settings)")}:
+            conn.execute("ALTER TABLE settings ADD COLUMN dispatch TEXT NOT NULL DEFAULT '{}'")
         _ensure_project_columns(conn)
         _ensure_intent_columns(conn)
         _ensure_job_columns(conn)

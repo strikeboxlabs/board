@@ -9,6 +9,7 @@ from typing import Any, Literal
 import yaml
 
 from board.dispatcher.skills import SkillsConfig
+from board.dispatch_settings import MAX_CONCLUDE_TIMEOUT, MAX_EXECUTION_TIMEOUT, MAX_REASON_TIMEOUT, MAX_WORKERS
 from board.skill_profiles import validate_skill_profile_ids
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -133,7 +134,7 @@ MOCK_ALLOWED_ENV_KEYS = frozenset(
 
 
 class ReasonTaskConfig(BaseModel):
-    timeout: int = Field(gt=0)
+    timeout: int = Field(gt=0, le=MAX_REASON_TIMEOUT, strict=True)
     max_intents: int = Field(gt=0, default=3)
     target_open_intents: int = Field(gt=0, default=3)
     max_attempts_per_graph: int = Field(gt=0, default=3)
@@ -145,13 +146,13 @@ class ReasonTaskConfig(BaseModel):
 
 
 class ExploreTaskConfig(BaseModel):
-    timeout: int = Field(gt=0)
-    conclude_timeout: int = Field(gt=0)
+    timeout: int = Field(gt=0, le=MAX_EXECUTION_TIMEOUT, strict=True)
+    conclude_timeout: int = Field(gt=0, le=MAX_CONCLUDE_TIMEOUT, strict=True)
 
 
 class BootstrapTaskConfig(BaseModel):
-    timeout: int = Field(gt=0)
-    conclude_timeout: int = Field(gt=0)
+    timeout: int = Field(gt=0, le=MAX_EXECUTION_TIMEOUT, strict=True)
+    conclude_timeout: int = Field(gt=0, le=MAX_CONCLUDE_TIMEOUT, strict=True)
 
 
 class TasksConfig(BaseModel):
@@ -176,7 +177,7 @@ class LocalConfig(BaseModel):
 
 
 class RuntimeConfig(BaseModel):
-    max_workers: int = Field(gt=0)
+    max_workers: int = Field(gt=0, le=MAX_WORKERS, strict=True)
     max_running_projects: int = Field(gt=0)
     max_project_workers: int = Field(gt=0)
     interval: int = Field(gt=0)
@@ -192,7 +193,7 @@ class WorkerConfig(BaseModel):
     name: str
     type: WorkerType
     task_types: list[TaskType]
-    max_running: int = Field(gt=0)
+    max_running: int = Field(gt=0, le=MAX_WORKERS, strict=True)
     priority: int = Field(ge=0)
     env: dict[str, str] = Field(default_factory=dict)
     skill_profiles: list[str] = Field(default_factory=list)
@@ -216,8 +217,6 @@ class WorkerConfig(BaseModel):
     @field_validator("task_types")
     @classmethod
     def validate_task_types(cls, value: list[TaskType]) -> list[TaskType]:
-        if not value:
-            raise ValueError("task_types must not be empty")
         if len(set(value)) != len(value):
             raise ValueError("task_types must be unique")
         return value
@@ -290,7 +289,12 @@ class DispatchConfig(BaseModel):
             raise ValueError("workers must not be empty")
         if self.runtime.max_project_workers > self.runtime.max_workers:
             raise ValueError("max_project_workers cannot exceed max_workers")
+        for task in ("reason", "explore", "bootstrap"):
+            if sum(task in worker.task_types for worker in self.workers) > 1:
+                raise ValueError(f"Only one default worker may be assigned to {task}")
         for worker in self.workers:
+            if worker.max_running > self.runtime.max_workers:
+                raise ValueError(f"worker {worker.name} max_running cannot exceed max_workers")
             if worker.skill_profiles:
                 if not self.skills.enabled:
                     raise ValueError(f"worker {worker.name} configures skill_profiles but skills.enabled is false")

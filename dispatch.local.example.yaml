@@ -68,13 +68,13 @@ workers:
 
   # - name: "local-codex"
   #   type: "codex"
-  #   task_types: [explore]
+  #   task_types: []  # register without assigning tasks; select in Settings
   #   max_running: 1
   #   priority: 1
 
   # - name: "local-pi"
   #   type: "pi"
-  #   task_types: [reason]
+  #   task_types: []  # register without assigning tasks; select in Settings
   #   max_running: 1
   #   priority: 2
 

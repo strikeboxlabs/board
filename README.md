@@ -1,5 +1,8 @@
 "# board" 
 
+The dispatcher supports live file settings and web UI overrides for routing,
+concurrency, and execution timeouts. See [live settings](docs/specs/dispatcher-design.md#live-settings).
+
 
 ## Native skill profiles
 

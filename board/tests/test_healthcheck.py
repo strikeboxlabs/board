@@ -164,7 +164,7 @@ def test_run_startup_healthchecks_reports_each_worker() -> None:
             "workers": [
                 {"name": "ok-worker", "type": "mock", "task_types": ["reason"], "max_running": 1, "priority": 0,
                  "env": {"MOCK_HEALTHCHECK": '{"delay":[0,0],"outcomes":{"ok":1.0,"fail":0.0}}'}},
-                {"name": "fail-worker", "type": "mock", "task_types": ["reason"], "max_running": 1, "priority": 0,
+                {"name": "fail-worker", "type": "mock", "task_types": [], "max_running": 1, "priority": 0,
                  "env": {"MOCK_HEALTHCHECK": '{"delay":[0,0],"outcomes":{"ok":0.0,"fail":1.0}}'}},
             ],
         }

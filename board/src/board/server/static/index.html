@@ -1336,20 +1336,102 @@
 
 <!-- Settings -->
 <div x-show="showSettings" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showSettings = false">
-  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 border border-slate-200/60" @click.stop>
-    <h3 class="text-base font-semibold text-slate-700 mb-4">Server Settings</h3>
-    <div>
-      <label class="text-[11px] text-slate-400 mb-1 block font-medium">Intent timeout (seconds)</label>
-      <input type="number" x-model.number="settingsForm.intent_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto mx-4 p-6 border border-slate-200/60" @click.stop>
+    <h3 class="text-base font-semibold text-slate-700 mb-2">Settings</h3>
+    <p class="text-xs text-slate-500 mb-4">Choose which workers run each task, adjust limits, then save. Changes apply to the next dispatch; running workers are unaffected. Editing or restoring dispatch.yaml replaces saved web settings.</p>
+    <p x-show="settingsLoading" class="text-sm text-slate-500">Loading settings…</p>
+    <p x-show="settingsError" x-text="settingsError" role="alert" class="text-sm text-red-600 mb-3"></p>
+    <button x-show="settingsError || settingsFileChanged()" @click="loadSettings()" class="text-xs underline text-brand-600 mb-3">Reload settings from disk</button>
+    <div x-show="!settingsLoading" class="space-y-5">
+      <template x-if="effectiveConfig">
+        <div class="space-y-5">
+          <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs space-y-1">
+            <p x-text="'Last dispatcher report: ' + new Date(effectiveConfig.reported_at).toLocaleString()"></p>
+            <p x-show="Date.now() - Date.parse(effectiveConfig.reported_at) > 90000" class="text-amber-700">Report is stale. The dispatcher may be offline.</p>
+            <p x-show="effectiveConfig.error" x-text="effectiveConfig.error" class="text-red-600"></p>
+            <p x-show="!effectiveConfig.error" x-text="settingsFileChanged() ? 'dispatch.yaml was updated. Reload settings.' : JSON.stringify(settingsSavedOverrides) === JSON.stringify(effectiveConfig.applied_overrides) ? 'Settings applied.' : 'Saved changes are waiting for the next dispatcher poll.'"></p>
+          </div>
+          <div>
+            <h4 class="text-sm font-semibold text-slate-700">Task routing</h4>
+            <p class="text-xs text-slate-500 mt-1 mb-2">Choose one model for each task. Models that are not configured are unavailable. Specific worker assignments on individual intents take precedence.</p>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm text-left">
+                <thead><tr class="border-b border-slate-200">
+                  <th class="p-2">Task</th>
+                  <template x-for="worker in settingsWorkers()" :key="worker.name"><th class="p-2 font-medium" :class="!worker.available ? 'opacity-40' : ''"><span class="block" x-text="settingsWorkerLabel(worker)"></span><span class="block text-[11px] text-slate-400 font-normal" x-text="worker.available ? worker.name : worker.unavailable_reason"></span></th></template>
+                </tr></thead>
+                <tbody>
+                  <template x-for="task in ['bootstrap', 'reason', 'explore']" :key="task">
+                    <tr class="border-b border-slate-100">
+                      <th class="p-2 font-medium" x-text="task"></th>
+                      <template x-for="worker in settingsWorkers()" :key="worker.name">
+                        <td class="p-2" :class="!worker.available ? 'opacity-40' : ''">
+                          <input type="radio" :name="'task-route-' + task" :value="worker.name" :aria-label="task + ' on ' + worker.name" :title="worker.available ? settingsWorkerLabel(worker) : worker.unavailable_reason" :disabled="!worker.available" :checked="settingsRouteEnabled(task, worker)" @change="setSettingsRoute(task, worker.name)" class="accent-brand-500 cursor-pointer disabled:cursor-not-allowed">
+                        </td>
+                      </template>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+            <p class="text-xs text-slate-500 mt-2">Selecting another model replaces the previous selection for that task.</p>
+            <button x-show="Object.keys(settingsForm.dispatch.routing).length" @click="settingsForm.dispatch.routing = {}" class="text-xs underline text-brand-600 mt-2">Reset routing</button>
+          </div>
+          <div>
+            <h4 class="text-sm font-semibold text-slate-700">Worker concurrency</h4>
+            <p class="text-xs text-slate-500 mt-1">Global limit: <span x-text="effectiveConfig.runtime.max_workers"></span>. Per-project limit: <span x-text="effectiveConfig.runtime.max_project_workers"></span>.</p>
+            <template x-for="worker in settingsWorkers().filter(w => w.registered)" :key="worker.name">
+              <div class="mt-3" :class="!worker.available ? 'opacity-40' : ''">
+                <label :for="'worker-limit-' + worker.name" class="text-xs font-medium text-slate-600" x-text="settingsWorkerLabel(worker)"></label>
+                <div class="flex items-center gap-3 mt-1">
+                  <input type="range" min="1" :max="settingsConcurrencyLimit()" :disabled="!worker.available" :aria-label="worker.name + ' concurrency slider'" :value="settingsForm.dispatch.worker_max_running[worker.name] ?? worker.max_running" @input="setSettingsWorkerLimit(worker.name, $event.target.value)" class="flex-1 accent-brand-500">
+                  <input type="number" min="1" step="1" :id="'worker-limit-' + worker.name" :max="settingsConcurrencyLimit()" :disabled="!worker.available" :placeholder="worker.max_running" :value="settingsForm.dispatch.worker_max_running[worker.name] ?? worker.max_running" @input="setSettingsWorkerLimit(worker.name, $event.target.value)" class="w-20 px-2 py-1 border border-slate-200 rounded-lg text-sm">
+                  <button x-show="worker.name in settingsForm.dispatch.worker_max_running" @click="delete settingsForm.dispatch.worker_max_running[worker.name]" class="text-xs underline text-brand-600">Reset</button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+      <p x-show="!effectiveConfig" class="text-sm text-slate-500">No dispatcher report yet. Worker controls appear after the dispatcher reports its configuration.</p>
+      <div>
+        <h4 class="text-sm font-semibold text-slate-700 mb-2">Execution timeouts</h4>
+        <div class="grid grid-cols-2 gap-4">
+          <template x-for="task in ['reason', 'explore']" :key="task">
+            <label class="text-xs text-slate-600 font-medium">
+              <span class="block mb-1" x-text="task + ' (seconds)'"></span>
+              <input type="number" min="1" step="1" :max="settingsLimits[task + '_execution_timeout']" :aria-label="task + ' execution timeout'" :value="settingsForm.dispatch[task + '_execution_timeout'] ?? effectiveConfig?.file_defaults.tasks[task].timeout ?? ''" @input="settingsForm.dispatch[task + '_execution_timeout'] = $event.target.value === '' ? null : Number($event.target.value); settingsSaveError = ''" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm">
+              <span class="block text-[11px] text-slate-500 mt-1" x-text="settingsDuration(settingsForm.dispatch[task + '_execution_timeout'] ?? effectiveConfig?.file_defaults.tasks[task].timeout) + ' · maximum ' + settingsDuration(settingsLimits[task + '_execution_timeout'])"></span>
+            </label>
+          </template>
+        </div>
+        <p class="text-xs text-slate-500 mt-2">Time limits for newly dispatched tasks.</p>
+      </div>
+      <button @click="resetDispatchOverrides()" class="text-xs underline text-brand-600">Reset to defaults</button>
+      <details class="border-t border-slate-200 pt-3">
+        <summary class="text-sm font-medium text-slate-700 cursor-pointer">Server heartbeat leases</summary>
+        <p class="text-xs text-slate-500 my-2">Ownership expiry, separate from execution timeouts. These apply immediately on the server, including to running workers. Keep them longer than the dispatcher interval.</p>
+        <div class="grid grid-cols-2 gap-4">
+          <label class="text-xs text-slate-600">Intent lease (seconds)<input type="number" :min="settingsLimits.heartbeat_minimum || 5" :max="settingsLimits.heartbeat_timeout" step="1" x-model.number="settingsForm.intent_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl mt-1"></label>
+          <label class="text-xs text-slate-600">Reason lease (seconds)<input type="number" :min="settingsLimits.heartbeat_minimum || 5" :max="settingsLimits.heartbeat_timeout" step="1" x-model.number="settingsForm.reason_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl mt-1"></label>
+        </div>
+      </details>
+      <details x-show="effectiveConfig" class="border-t border-slate-200 pt-3">
+        <summary class="text-sm font-medium text-slate-700 cursor-pointer">Effective configuration now</summary>
+        <p class="text-xs text-slate-500 my-2">The latest settings reported by the dispatcher. Refreshes while this panel is open.</p>
+        <button @click="refreshEffectiveConfig()" class="text-xs underline text-brand-600 mb-2">Refresh now</button>
+        <pre class="text-xs overflow-auto bg-slate-50 rounded-xl p-3 max-h-64" x-text="JSON.stringify(effectiveConfig, null, 2)"></pre>
+      </details>
     </div>
-    <div class="mt-4">
-      <label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason timeout (seconds)</label>
-      <input type="number" x-model.number="settingsForm.reason_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
-      <p class="text-[11px] text-slate-400 mt-2">Shared backend configuration.</p>
+    <p x-show="settingsStoredErrors.length" class="text-xs text-amber-700 mt-4">Previously saved settings are invalid. Correct the values below or use Reset to defaults.</p>
+    <div x-show="settingsValidationErrors().length || settingsSaveError" role="alert" class="mt-4 p-3 rounded-xl border border-red-200 bg-red-50 text-xs text-red-700">
+      <p class="font-semibold">Settings cannot be saved:</p>
+      <ul class="list-disc pl-4 mt-1"><template x-for="error in settingsValidationErrors()" :key="error"><li x-text="error"></li></template></ul>
+      <p x-show="settingsSaveError" x-text="settingsSaveError"></p>
     </div>
     <div class="flex justify-end gap-2 mt-5">
       <button @click="showSettings = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">Close</button>
-      <button @click="saveServerSettings()" class="px-4 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200">Save Server</button>
+      <button @click="saveServerSettings()" :disabled="settingsLoading || settingsSaving || !!settingsError || settingsValidationErrors().length > 0" class="px-4 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-50" x-text="settingsSaving ? 'Saving…' : 'Save settings'"></button>
     </div>
   </div>
 </div>
@@ -1529,7 +1611,16 @@ function boardApp() {
     reopenForm: { projectId: '', projectTitle: '', description: '' },
     renameForm: { projectId: '', originalTitle: '', title: '' },
     localPrefs: { actor_name: 'Human', layout_mode: 'dagre_tb' },
-    settingsForm: { intent_timeout: 5, reason_timeout: 5 },
+    settingsForm: { file_revision: null, intent_timeout: 5, reason_timeout: 5, dispatch: { routing: {}, worker_max_running: {}, reason_execution_timeout: null, explore_execution_timeout: null } },
+    effectiveConfig: null,
+    settingsLoading: false,
+    settingsSaving: false,
+    settingsError: '',
+    settingsSavedOverrides: null,
+    settingsLoadedForm: null,
+    settingsStoredErrors: [],
+    settingsSaveError: '',
+    settingsLimits: { reason_execution_timeout: 3600, explore_execution_timeout: 86400, heartbeat_timeout: 86400, heartbeat_minimum: 5 },
     deleteConfirm: { id: '', title: '' },
     isDeletingProject: false,
     yamlPreviewTitle: '',
@@ -2043,11 +2134,128 @@ function boardApp() {
     },
 
     async loadSettings() {
+      this.settingsLoading = true;
+      this.settingsError = '';
       try {
-        const s = await this.api('GET', '/settings');
-        this.settingsForm.intent_timeout = s.intent_timeout;
-        this.settingsForm.reason_timeout = s.reason_timeout;
-      } catch(e) { console.error(e); }
+        const { settings, effective } = await this.readConsistentSettings();
+        this.settingsForm = { file_revision: settings.file_revision ?? null, intent_timeout: settings.intent_timeout, reason_timeout: settings.reason_timeout, dispatch: settings.dispatch };
+        this.settingsLoadedForm = JSON.stringify(this.settingsForm);
+        this.settingsSavedOverrides = JSON.parse(JSON.stringify(settings.dispatch));
+        this.settingsStoredErrors = settings.validation_errors || [];
+        this.settingsLimits = settings.limits || this.settingsLimits;
+        this.settingsSaveError = '';
+        this.effectiveConfig = effective;
+      } catch(e) {
+        this.settingsError = e.message;
+      } finally {
+        this.settingsLoading = false;
+      }
+    },
+
+    async readConsistentSettings() {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const [settings, effective] = await Promise.all([
+          this.api('GET', '/settings'), this.api('GET', '/settings/effective'),
+        ]);
+        if (!effective?.file_revision || settings.file_revision === effective.file_revision) return { settings, effective };
+      }
+      throw new Error('dispatch.yaml changed while loading. Reload settings.');
+    },
+
+    settingsFileChanged() {
+      return Boolean(this.effectiveConfig?.file_revision && this.settingsForm.file_revision !== this.effectiveConfig.file_revision);
+    },
+
+    async refreshEffectiveConfig() {
+      try {
+        this.effectiveConfig = await this.api('GET', '/settings/effective');
+        if (this.showSettings && JSON.stringify(this.settingsForm) === this.settingsLoadedForm
+            && this.settingsFileChanged() && !this.settingsLoading && !this.settingsSaving) {
+          await this.loadSettings();
+        }
+      } catch(e) { this.showToast(e.message, 'error'); }
+    },
+
+    settingsWorkers() {
+      const registered = (this.effectiveConfig?.file_defaults.workers ?? []).map(w => ({ ...w, registered: true, available: w.available !== false }));
+      for (const type of ['claudecode', 'codex', 'pi']) {
+        if (!registered.some(w => w.type === type)) {
+          registered.push({ name: 'unconfigured-' + type, type, task_types: [], registered: false, available: false, unavailable_reason: 'Not configured' });
+        }
+      }
+      return registered;
+    },
+
+    settingsWorkerLabel(worker) {
+      return { claudecode: 'Claude Code', codex: 'Codex', pi: 'Pi', mock: 'Mock' }[worker.type] || worker.name;
+    },
+
+    settingsRouteNames(task) {
+      const routing = this.settingsForm.dispatch.routing || {};
+      return task in routing ? routing[task] : this.settingsWorkers().filter(w => w.registered && w.task_types.includes(task)).map(w => w.name);
+    },
+
+    settingsRouteEnabled(task, worker) {
+      const names = this.settingsRouteNames(task);
+      return names.length === 1 && names[0] === worker.name;
+    },
+
+    setSettingsRoute(task, name) {
+      if (!this.settingsWorkers().some(w => w.name === name && w.available)) return;
+      this.settingsForm.dispatch.routing[task] = [name];
+      this.settingsSaveError = '';
+    },
+
+    settingsConcurrencyLimit() {
+      return this.settingsLimits.worker_max_running || this.effectiveConfig?.runtime.max_workers || 1;
+    },
+
+    settingsDuration(seconds) {
+      if (!Number.isFinite(seconds) || seconds <= 0) return '';
+      const units = seconds >= 86400 ? [86400, 'days'] : seconds >= 3600 ? [3600, 'hours'] : seconds >= 60 ? [60, 'minutes'] : [1, 'seconds'];
+      return (seconds / units[0]).toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' ' + units[1];
+    },
+
+    settingsValidationErrors() {
+      if (this.settingsLoading) return [];
+      const errors = [];
+      if (!this.effectiveConfig) return ['Wait for the dispatcher to report its configuration.'];
+      if (this.settingsFileChanged()) errors.push('dispatch.yaml changed. Reload settings from disk before saving.');
+      const workers = this.settingsWorkers();
+      for (const task of ['reason', 'explore', 'bootstrap']) {
+        const names = this.settingsRouteNames(task);
+        if (!Array.isArray(names) || names.length !== 1) errors.push('Choose exactly one configured model for ' + task + '.');
+        else if (!workers.some(w => w.name === names[0] && w.available)) errors.push('The model selected for ' + task + ' is not configured or available.');
+      }
+      const maximum = this.settingsConcurrencyLimit();
+      for (const [name, count] of Object.entries(this.settingsForm.dispatch.worker_max_running || {})) {
+        if (!workers.some(w => w.name === name && w.available)) errors.push(name + ' is not configured or available.');
+        if (!Number.isInteger(count) || count < 1 || count > maximum) errors.push(name + ' concurrency must be between 1 and ' + maximum + '.');
+      }
+      for (const task of ['reason', 'explore']) {
+        const value = this.settingsForm.dispatch[task + '_execution_timeout'] ?? this.effectiveConfig.file_defaults.tasks[task].timeout;
+        const limit = this.settingsLimits[task + '_execution_timeout'];
+        if (!Number.isInteger(value) || value < 1 || value > limit) errors.push(task + ' timeout must be between 1 and ' + limit + ' seconds (' + this.settingsDuration(limit) + ' maximum).');
+      }
+      for (const field of ['intent_timeout', 'reason_timeout']) {
+        const value = this.settingsForm[field];
+        const minimum = this.settingsLimits.heartbeat_minimum || 5;
+        if (!Number.isInteger(value) || value < minimum || value > this.settingsLimits.heartbeat_timeout) errors.push(field.replace('_', ' ') + ' must be between ' + minimum + ' and ' + this.settingsLimits.heartbeat_timeout + ' seconds.');
+      }
+      if ((Object.keys(this.settingsForm.dispatch.routing || {}).length || Object.keys(this.settingsForm.dispatch.worker_max_running || {}).length)
+          && Date.now() - Date.parse(this.effectiveConfig.reported_at) > 90000) errors.push('The dispatcher report is stale; wait for a fresh report before changing workers.');
+      return errors;
+    },
+
+    setSettingsWorkerLimit(name, value) {
+      if (value === '') delete this.settingsForm.dispatch.worker_max_running[name];
+      else this.settingsForm.dispatch.worker_max_running[name] = Number(value);
+      this.settingsSaveError = '';
+    },
+
+    resetDispatchOverrides() {
+      this.settingsForm.dispatch = { routing: {}, worker_max_running: {}, reason_execution_timeout: null, explore_execution_timeout: null };
+      this.settingsSaveError = '';
     },
 
     async loadProject(id) {
@@ -2646,6 +2854,7 @@ function boardApp() {
 
     startPolling() {
       this.pollTimer = setInterval(async () => {
+        if (this.showSettings) await this.refreshEffectiveConfig();
         if (!this.polling) return;
         if (this.selectedProjectId && this.view === 'graph') {
           await this.loadProject(this.selectedProjectId);
@@ -4090,11 +4299,21 @@ function boardApp() {
     },
 
     async saveServerSettings() {
+      if (this.settingsValidationErrors().length || this.settingsSaving || this.settingsLoading) return;
+      this.settingsSaveError = '';
       try {
-        await this.api('PUT', '/settings', this.settingsForm);
-        this.showSettings = false;
-        this.showToast('Server settings saved');
-      } catch(e) { this.showToast(e.message, 'error'); }
+        this.settingsSaving = true;
+        const settings = await this.api('PUT', '/settings', this.settingsForm);
+        this.settingsForm = { file_revision: settings.file_revision ?? null, intent_timeout: settings.intent_timeout, reason_timeout: settings.reason_timeout, dispatch: settings.dispatch };
+        this.settingsLoadedForm = JSON.stringify(this.settingsForm);
+        this.settingsSavedOverrides = JSON.parse(JSON.stringify(settings.dispatch));
+        this.settingsStoredErrors = settings.validation_errors || [];
+        this.settingsLimits = settings.limits || this.settingsLimits;
+        this.settingsSaveError = '';
+        await this.refreshEffectiveConfig();
+        this.showToast('Settings saved; dispatcher applies changes on its next poll');
+      } catch(e) { this.settingsSaveError = e.message; }
+      finally { this.settingsSaving = false; }
     },
   };
 }

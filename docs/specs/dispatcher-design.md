@@ -613,7 +613,7 @@ Worker-related runtime fields in dispatch.yaml are:
 | --- | --- | --- |
 | `name` | Static Worker identifier | Used as creator or worker in protocol writes |
 | `type` | Worker driver name | Supports claudecode, codex, mock |
-| `task_types` | Supported tasks | bootstrap, reason, explore |
+| `task_types` | Default task assignments | bootstrap, reason, explore; `[]` registers a worker without assigning tasks |
 | `max_running` | Worker concurrency limit | No dispatch when the limit is reached |
 | `priority` | Selection priority | Lower numbers take precedence |
 | `env` | Runtime environment variables | Used by the driver; mock phase delays and outcome probabilities are configured here too |
@@ -626,7 +626,7 @@ The system provides three Worker drivers:
 
 In other words:
 
-- dispatch.yaml declares the driver, supported tasks, concurrency, and environment. For mock, each phase's simulated distribution also lives in env.
+- dispatch.yaml declares the driver, default task assignments, concurrency, and environment. For mock, each phase's simulated distribution also lives in env.
 - Driver code implements health checks, command startup, session extraction, and conclude resumption.
 
 ### Driver interface
@@ -860,6 +860,123 @@ When actually dispatching a task, also validate:
 
 ---
 
+## Live settings
+
+The dispatcher stats its configuration file every scheduler tick. File changes,
+including atomic replacements, are loaded through `DispatchConfig.load` before
+they are applied. Invalid or unreadable files produce an error in the daemon log
+and Settings panel; the last valid file configuration stays in use. Correcting
+the file clears the error on the next tick.
+
+Runtime limits, task parameters, worker definitions/routing, and priorities can
+change live. Changes to `server`, `runtime.execution`, `container`, or `local`
+require a restart because the dispatcher already owns backend connections and
+storage. The polling interval must remain shorter than both server heartbeat
+leases. Installing this feature in an existing daemon requires one initial
+service restart; subsequent tuning does not.
+
+The SPA Settings panel saves persistent overrides through `PUT /settings`.
+The dispatcher polls `GET /settings` once per tick. Precedence is:
+
+1. `dispatch.yaml` declares workers and default task assignments.
+2. Server `dispatch` overrides select routing, per-worker concurrency, and reason
+   and explore execution timeouts.
+3. Explicit intent worker/name or worker-type assignments retain their routing
+   constraints. Existing Pi requirements for skill profiles also remain enforced.
+
+**Disk edits replace older live changes.** Web overrides belong to the accepted
+file revision against which they were saved. When the dispatcher validates an
+edit or restored backup, it uses the new file values immediately and atomically
+clears older dispatcher overrides when reporting that revision. This includes
+restoring identical contents or preserving mtime; the revision also includes
+inode and ctime. Invalid file edits preserve the working configuration and saved
+overrides. A restore made while the dispatcher is down is recognized on startup.
+An ordinary restart with an unchanged file preserves newer web settings.
+
+The Settings form then inherits the restored file values without a separate
+Reset or Save operation. An untouched open form refreshes automatically. If a
+form has unsaved edits, it detects the newer file revision, disables Save, and
+offers **Reload settings from disk**, preserving its draft until reload.
+The API rejects stale-form submissions with HTTP 409. Settings and their revision
+are read in one database snapshot, and the browser retries if its two reads span
+a file update. These rules reset dispatcher controls only; heartbeat leases are
+separate server settings. Legacy overrides without a known file revision are
+cleared when the dispatcher first registers the disk configuration.
+
+For example (replace the worker names with names from the file):
+
+```json
+{
+  "file_revision": "<current file_revision from GET /settings>",
+  "intent_timeout": 15,
+  "reason_timeout": 15,
+  "dispatch": {
+    "routing": {"reason": ["local-claude"], "explore": ["local-pi"], "bootstrap": ["local-pi"]},
+    "worker_max_running": {"local-pi": 2},
+    "reason_execution_timeout": 90,
+    "explore_execution_timeout": 900
+  }
+}
+```
+
+Routing selects exactly one configured, available worker per task. A worker can
+handle tasks absent from its file defaults. The UI uses radio buttons; selecting
+another worker replaces that task's previous selection. Unregistered model types
+and registered local workers whose CLI is missing are greyed out. Local CLI
+availability checks installation, not provider login or account health.
+Register a worker with `task_types: []` to make it available in Settings without
+changing existing routing. Multiple names or an empty list in a routing override
+are invalid. Each task can have at most one worker in the file defaults too;
+a task absent from file assignments stays unassigned until explicitly routed.
+Omit a task's routing key or worker limit to use its file
+default. Set an execution timeout to `null` to use the file value. Sending
+`"dispatch": {}` resets all dispatcher overrides. Older clients that omit
+`dispatch` preserve existing overrides when changing heartbeat leases.
+Clients saving live changes must copy `file_revision` from a fresh settings read.
+
+The settings API validates the complete proposed settings before writing them;
+the dispatcher repeats validation against its current file configuration before
+applying changes. Unknown or unavailable worker names, concurrency above the
+global cap, and oversized timeouts are rejected. Selecting workers requires a
+dispatcher report no older than 90 seconds. Invalid changes leave saved values
+and the last effective configuration intact.
+Settings polling failures retain cached overrides and do not prevent file reloads.
+
+Reason execution timeouts are limited to 1–3,600 seconds (one hour); explore and
+bootstrap execution timeouts to 1–86,400 seconds (24 hours); conclude phases to
+1–3,600 seconds. Each worker's concurrency must be between one and the global
+`max_workers` limit, which has an absolute ceiling of 256. These bounds apply to
+file configuration and live overrides. Heartbeat leases must be between five
+seconds and 24 hours and longer than the worker heartbeat interval. The reported
+interval retains the longer interval of running tasks when a file edit reduces it.
+
+`GET /settings` remains readable for invalid settings saved by an older version.
+It returns those draft values with `validation_errors` and the current `limits`;
+the UI highlights them and disables Save until corrected or reset. A dispatcher
+starting with invalid legacy overrides uses validated file defaults and reports
+the rejection. It never applies those invalid values. No automatic migration
+chooses a model or silently overwrites an operator's saved selections.
+
+These dispatcher controls apply to the next dispatch. Submitted tasks retain
+their original config snapshots. On a concurrency reduction, existing tasks
+finish and new dispatches wait until capacity is available; increasing
+`runtime.max_workers` replaces the execution pool without cancelling work.
+Reason/explore execution timeouts are distinct from the server's
+`intent_timeout`/`reason_timeout` heartbeat leases. Lease edits apply immediately
+on the server, including to already running workers. Conclude-phase timeouts are
+controlled by the file.
+
+`GET /settings/effective` returns the last dispatcher report, or `null` before
+the first report. It includes effective routing, task and runtime limits, worker
+names/types/priorities, applied overrides, file defaults, validation errors, and
+`reported_at`. It excludes worker environments and credentials. The dispatcher
+reports changes immediately and refreshes unchanged reports every 30 seconds.
+Reporting failures are retried without blocking dispatch. The Settings panel
+refreshes this view while open, distinguishes saved overrides from applied ones,
+and marks stale reports. Routing choices are editable across all registered
+workers; the panel shows one selected worker per task without a configuration-source
+column. Reset buttons edit the form; Save settings persists them.
+
 ## Configuration field reference
 
 ### `dispatch.yaml`
@@ -926,7 +1043,7 @@ Effective only with runtime.execution: local; ignored in container mode. Contain
 | --- | --- | --- |
 | `name` | Yes | Static Worker ID, used as creator or worker in protocol writes |
 | `type` | Yes | Worker driver name, such as claudecode, codex, or mock |
-| `task_types` | Yes | Tasks supported by this Worker |
+| `task_types` | Yes | Default task assignments; live routing may assign other tasks; `[]` leaves the worker unassigned |
 | `max_running` | Yes | This Worker's concurrency limit |
 | `priority` | Yes | Lower values take precedence among candidates for the current task type |
 | `env` | Yes | Worker's environment; each driver defines required keys and validates them at startup |
@@ -979,7 +1096,7 @@ workers:
   # and therefore have independent concurrency quotas.
   - name: "claude-sonnet-thinker"
     type: "claudecode"
-    task_types: [bootstrap, reason]
+    task_types: [reason]
     max_running: 1
     priority: 0  # lower number wins; ties prefer fewer running tasks, then choose randomly
     env:
@@ -989,7 +1106,7 @@ workers:
 
   - name: "claude-sonnet-doer"
     type: "claudecode"
-    task_types: [bootstrap, explore]
+    task_types: [bootstrap]
     max_running: 1
     priority: 1
     env:
@@ -999,7 +1116,7 @@ workers:
 
   - name: "codex-gpt54"
     type: "codex"
-    task_types: [bootstrap, reason, explore]
+    task_types: [explore]
     max_running: 1
     priority: 3
     env:
@@ -1009,7 +1126,7 @@ workers:
 
   - name: "codex-gpt54-alt"
     type: "codex"
-    task_types: [bootstrap, explore]
+    task_types: []
     max_running: 1
     priority: 4
     env:
@@ -1019,7 +1136,7 @@ workers:
 
   - name: "mock-observer"
     type: "mock"
-    task_types: [bootstrap, reason, explore]
+    task_types: []
     max_running: 1
     priority: 9
     env:
